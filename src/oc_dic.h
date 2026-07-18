@@ -32,6 +32,7 @@ namespace opencorr
 	// -3: terminated at the beginning of (ICGN)
 	// -4: Not convergence in iteration (ICGN)
 	// -5: NaN in resutls (ICGN)
+	// -6: rejected by reliability-guided propagation, quality or spatial jump-tolerance gate not met (ReliabilityGuided2D)
 
 	//structure for brute force searching
 	struct KeypointIndex
