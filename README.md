@@ -14,6 +14,48 @@ Users can also access the information of OpenCorr via website [opencorr.org](htt
 
 ![image](./img/gui_dvc_2.png)
 
+---
+
+# About this fork
+
+This is [SurView DIC](https://github.com/katalystnord/SurView)'s engine
+fork of OpenCorr — everything below this section is Dr. Jiang's original
+upstream README, kept as-is.
+
+- **`main`** tracks upstream (`vincentjzy/OpenCorr`) as a clean, unmodified
+  mirror.
+- **`surview-dev`** (this branch, and the repository's default) is where
+  SurView-specific capability work lives: new modules built following
+  OpenCorr's own class/API conventions, each ported from a permissively-
+  licensed source (primarily [DICe](https://github.com/dicengine/dice) and
+  [ncorr_2D_cpp](https://github.com/justinblaber/ncorr_2D_cpp), both
+  BSD-3-Clause) and validated against real or synthetic test data. See the
+  [tracking issue](https://github.com/katalystnord/OpenCorr/issues/1) for
+  the full punch list and rationale.
+
+Modules added on `surview-dev` so far:
+
+- Uncertainty quantification (sigma/beta metrics) — [#2](https://github.com/katalystnord/OpenCorr/issues/2)
+- Checkerboard camera calibration solve + stereo epipolar quality metric — [#3](https://github.com/katalystnord/OpenCorr/issues/3)
+- `.cine` high-speed-camera file I/O — [#4](https://github.com/katalystnord/OpenCorr/issues/4)
+- Gradient-free (Nelder-Mead simplex) matching — [#5](https://github.com/katalystnord/OpenCorr/issues/5)
+- Phase-correlation initializer — [#6](https://github.com/katalystnord/OpenCorr/issues/6)
+- RG-DIC seed-propagation flood-fill — [#7](https://github.com/katalystnord/OpenCorr/issues/7)
+- Sequence/reference-update tracking — [#8](https://github.com/katalystnord/OpenCorr/issues/8)
+- Conformal/arbitrary subset shapes (data model, phase 1) — [#9](https://github.com/katalystnord/OpenCorr/issues/9)
+
+Two small, generically-useful fixes found during this work were also
+submitted upstream directly, independent of the fork:
+[#25](https://github.com/vincentjzy/OpenCorr/pull/25) (out-of-bounds target
+subset corruption in ICGN) and
+[#26](https://github.com/vincentjzy/OpenCorr/pull/26) (OpenMP thread-pool
+pinning).
+
+OpenCorr is MPL-2.0 licensed; this fork remains MPL-2.0 for the same files,
+per the terms of that license.
+
+---
+
 # Important updates
 
 >2021.04.23, OpenCorr is released to public.
