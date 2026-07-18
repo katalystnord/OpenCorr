@@ -33,8 +33,12 @@ target_link_libraries(opencorr PUBLIC
     fftw3l
 )
 
-option(OPENCORR_BUILD_SMOKE_TEST "Build the local build-verification smoke test" OFF)
+option(OPENCORR_BUILD_SMOKE_TEST "Build local build-verification smoke tests (*_smoke_test.cpp)" OFF)
 if(OPENCORR_BUILD_SMOKE_TEST)
-    add_executable(smoke_test smoke_test.cpp)
-    target_link_libraries(smoke_test PRIVATE opencorr)
+    file(GLOB OPENCORR_SMOKE_TESTS "*_smoke_test.cpp")
+    foreach(test_src ${OPENCORR_SMOKE_TESTS})
+        get_filename_component(test_name ${test_src} NAME_WE)
+        add_executable(${test_name} ${test_src})
+        target_link_libraries(${test_name} PRIVATE opencorr)
+    endforeach()
 endif()

@@ -40,5 +40,6 @@
 #include "oc_stereovision.h"
 #include "oc_strain.h"
 #include "oc_subset.h"
+#include "oc_uncertainty.h"
 
 #endif //_OPENCORR_

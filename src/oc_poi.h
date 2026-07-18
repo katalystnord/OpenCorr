@@ -46,8 +46,14 @@ namespace opencorr
 		struct
 		{
 			float u0, v0, zncc, iteration, convergence, feature;
+			//sigma: closed-form displacement-uncertainty estimate (Sutton/Schreier-style,
+			//from image noise + subset gradient content); -1 if not computed or degenerate.
+			//beta: cost-function-conditioning probe (finite-difference sensitivity of ZNSSD
+			//to a small u/v/rotation perturbation around the converged solution); 0 if not
+			//computed. Both filled by Uncertainty2D, see oc_uncertainty.h.
+			float sigma, beta;
 		};
-		float r[6];
+		float r[8];
 	};
 
 	union Result2DS
