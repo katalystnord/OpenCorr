@@ -41,6 +41,7 @@
 #include "oc_point.h"
 #include "oc_reliability_guided.h"
 #include "oc_sequence_tracker.h"
+#include "oc_shape.h"
 #include "oc_sift.h"
 #include "oc_simplex.h"
 #include "oc_stereovision.h"
