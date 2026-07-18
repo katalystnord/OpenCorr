@@ -73,6 +73,11 @@ namespace opencorr
 
 	float PhaseCorrelation2D::compute(Image2D& ref_img, Image2D& tar_img, float& u, float& v)
 	{
+		if (ref_img.width != width || ref_img.height != height || tar_img.width != width || tar_img.height != height)
+		{
+			throw std::string("PhaseCorrelation2D::compute(): ref_img/tar_img size does not match the size this instance was constructed for");
+		}
+
 		fillWindowed(ref_img, buf_a);
 		fillWindowed(tar_img, buf_b);
 
@@ -134,13 +139,19 @@ namespace opencorr
 				}
 			}
 		}
-		if (peak_x != next_x && next_x > 1)
+		//Only treat the (0,0) peak as spurious -- and only then, as a single atomic swap of
+		//BOTH coordinates together -- when a genuinely comparable competing peak exists
+		//elsewhere (next_real within half of max_real). The original DICe logic this was
+		//ported from swaps peak_x and peak_y independently under two separate conditions,
+		//which can fire asymmetrically (mixing peak_x from one candidate with peak_y left at
+		//0, or vice versa -- a location that doesn't correspond to any actual FFT bin) and
+		//unconditionally overrides even a strong, genuinely-correct zero-shift answer (e.g.
+		//two frames with truly no motion) whenever ANY other bin is nonzero. Gating on
+		//relative magnitude keeps the intent (suppress a weak DC-bias artifact when a real
+		//competing peak exists) without either failure mode.
+		if (peak_x == 0 && peak_y == 0 && next_real > 0.5f * max_real)
 		{
 			peak_x = next_x;
-			max_real = next_real;
-		}
-		if (peak_y != next_y && next_y > 1)
-		{
 			peak_y = next_y;
 			max_real = next_real;
 		}

@@ -46,6 +46,14 @@ namespace opencorr
 	//FFTCC2D/FeatureAffine2D to find a reliable local match (e.g. large
 	//rigid-body motion on a low-texture sample), but the image as a whole
 	//still has enough content to phase-correlate.
+	//
+	//Not thread-safe: unlike OpenCorr's per-POI solvers (ICGN2D1 etc., which pool
+	//per-thread scratch state because they're called from inside an OpenMP loop over
+	//POIs), PhaseCorrelation2D is meant to run once per image pair as a whole-image
+	//initializer BEFORE the per-POI parallel stage, not inside it -- so it keeps a
+	//single set of FFTW buffers/plans as instance state rather than pooling them. If a
+	//caller does need concurrent calls (e.g. processing several independent image pairs
+	//in parallel), construct one instance per thread.
 
 	class PhaseCorrelation2D
 	{

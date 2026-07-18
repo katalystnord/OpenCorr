@@ -56,6 +56,13 @@ namespace opencorr
 	int ReliabilityGuided2D::compute(std::vector<POI2D>& poi_queue, const std::vector<int>& seed_indices, DIC& solver)
 	{
 		int total = poi_number_x * poi_number_y;
+		if ((int)poi_queue.size() != total)
+		{
+			throw std::string("ReliabilityGuided2D::compute(): poi_queue.size() ("
+				+ std::to_string(poi_queue.size()) + ") does not match poi_number_x * poi_number_y ("
+				+ std::to_string(total) + ")");
+		}
+
 		std::vector<bool> visited(total, false); //popped, or already queued -- never queued twice
 
 		std::priority_queue<RGQueueEntry, std::vector<RGQueueEntry>, RGQueueLess> queue;
@@ -119,9 +126,15 @@ namespace opencorr
 					queue.push({ nidx, neighbor.result.zncc });
 					accepted++;
 				}
-				else
+				else if (neighbor.result.zncc >= 0.f)
 				{
-					neighbor.result.zncc = -6.f; //rejected: quality or spatial jump-tolerance gate not met, see oc_dic.h
+					//only stamp -6 when the solver itself nominally succeeded (zncc>=0) but
+					//this propagation's own quality/jump gate rejected it -- if the solver
+					//already produced a specific failure sentinel (-3/-4/-5, see oc_dic.h),
+					//preserve it instead of overwriting it, so a caller can tell "the
+					//correlation itself failed" apart from "it succeeded but propagation
+					//rejected the result," which call for different tuning responses
+					neighbor.result.zncc = -6.f;
 				}
 			}
 		}

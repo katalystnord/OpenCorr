@@ -47,9 +47,11 @@ namespace opencorr
 		//minimizes objective_fn starting from variables (in/out: initial guess in,
 		//converged solution out), building the initial simplex by perturbing each
 		//dimension of variables by the matching entry of deltas. Returns true if
-		//converged within max_iterations; iterations_used reports how many were taken.
+		//converged within max_iterations; iterations_used reports how many were taken;
+		//final_cost reports the winning vertex's objective value, so a caller doesn't have
+		//to pay for a redundant extra objective_fn evaluation just to recover it.
 		bool minimize(std::vector<float>& variables, const std::vector<float>& deltas,
-			const std::function<float(const std::vector<float>&)>& objective_fn, int& iterations_used);
+			const std::function<float(const std::vector<float>&)>& objective_fn, int& iterations_used, float& final_cost);
 
 	private:
 		int max_iterations;

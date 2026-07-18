@@ -29,8 +29,17 @@ namespace opencorr
 	void NelderMead::setTolerance(float tolerance) { this->tolerance = tolerance; }
 
 	bool NelderMead::minimize(std::vector<float>& variables, const std::vector<float>& deltas,
-		const std::function<float(const std::vector<float>&)>& objective_fn, int& iterations_used)
+		const std::function<float(const std::vector<float>&)>& objective_fn, int& iterations_used, float& final_cost)
 	{
+		//NelderMead is a generic, reusable minimizer (not limited to SimplexMatch2D's own
+		//always-6-parameter usage), so an empty or mismatched input has to be rejected
+		//explicitly here: an empty variables vector would otherwise divide by num_dofs=0 and
+		//read cost[1] on a size-1 array a few lines below, both undefined behavior.
+		if (variables.empty() || deltas.size() != variables.size())
+		{
+			throw std::string("NelderMead::minimize(): variables must be non-empty and deltas must be the same size as variables");
+		}
+
 		const int num_dofs = (int)variables.size();
 		const int mpts = num_dofs + 1;
 		const float tiny = 1e-10f;
@@ -183,6 +192,7 @@ namespace opencorr
 			if (cost[i] < cost[ilo]) ilo = i;
 		}
 		variables = points[ilo];
+		final_cost = cost[ilo];
 
 		return converged;
 	}
@@ -288,7 +298,23 @@ namespace opencorr
 				local_coor.y = r - subset_ry;
 				warped_coor = deformation.warp(local_coor);
 				global_coor = instance->tar_subset->center + warped_coor;
-				instance->tar_subset->eg_mat(r, c) = tar_interp->compute(global_coor);
+				float sample = tar_interp->compute(global_coor);
+				//BicubicBspline::compute() returns exactly -1.f (not NaN, not an exception) for
+				//out-of-range coordinates -- a real pixel intensity is never negative, so this
+				//is an unambiguous, cheap way to detect it without duplicating its bounds test.
+				//If only PART of the warped window leaves the image (a deformation guess that
+				//pushes some but not all sample points out of bounds), the resulting subset
+				//isn't uniform, so the tar_mean_norm<=0.f guard below would never catch this on
+				//its own -- without this check, the fabricated -1 values would silently blend
+				//into the cost as if they were real intensities and bias the optimizer. Note:
+				//ICGN2D1::compute() and Uncertainty2D::znssd() share this same exposure (same
+				//BicubicBspline sentinel convention) and are not guarded here since fixing them
+				//is outside this port's scope -- flagged separately for follow-up.
+				if (sample < 0.f)
+				{
+					return 1e10f;
+				}
+				instance->tar_subset->eg_mat(r, c) = sample;
 			}
 		}
 
@@ -335,11 +361,10 @@ namespace opencorr
 
 		NelderMead simplex(max_iterations, tolerance);
 		int iterations_used = 0;
+		float znssd_final = 0.f;
 		simplex.minimize(p, deltas,
 			[&](const std::vector<float>& variables) { return znssd(instance.get(), ref_mean_norm, variables, subset_rx, subset_ry); },
-			iterations_used);
-
-		float znssd_final = znssd(instance.get(), ref_mean_norm, p, subset_rx, subset_ry);
+			iterations_used, znssd_final); //final_cost is the winning vertex's already-computed cost -- no redundant re-evaluation needed
 
 		poi->deformation.u = p[0];
 		poi->deformation.ux = p[1];

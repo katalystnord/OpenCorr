@@ -70,10 +70,16 @@ namespace opencorr
 
 		//poi_queue must be a poi_number_x * poi_number_y row-major grid (poi_queue[row *
 		//poi_number_x + col]); seed_indices are the flat indices of already-solved POIs
-		//(poi_queue[i].result.zncc already set to a valid, positive value) to start
-		//propagation from. solver.compute(POI2D*) is called to refine each newly-reached
-		//POI -- pass an already prepare()'d ICGN2D1/ICGN2D2/etc. Returns the number of
-		//POIs the flood-fill successfully reached and accepted (excluding the seeds).
+		//(poi_queue[i].result.zncc already set to a valid, STRICTLY POSITIVE value) to start
+		//propagation from -- e.g. from FFTCC2D followed by ICGN2D1/ICGN2D2/ICLM2D1/etc.
+		//Solvers whose own success convention is zncc==0 rather than a real correlation
+		//score (FeatureAffine2D, which does feature-based matching rather than a
+		//correlation-coefficient match) are NOT usable as a seed source here: zncc==0 is
+		//indistinguishable from a POI that was never computed at all (POI2D::clear()'s own
+		//default), so such a seed is silently skipped rather than accepted. solver.compute(POI2D*)
+		//is called to refine each newly-reached POI -- pass an already prepare()'d
+		//ICGN2D1/ICGN2D2/etc. Returns the number of POIs the flood-fill successfully reached
+		//and accepted (excluding the seeds).
 		int compute(std::vector<POI2D>& poi_queue, const std::vector<int>& seed_indices, DIC& solver);
 
 	private:

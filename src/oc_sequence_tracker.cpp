@@ -86,13 +86,23 @@ namespace opencorr
 			status.reference_updated = false;
 			status.jump_rejected_count = 0;
 
+			//tracked per-POI (not just via the aggregate jump_rejected_count) because the
+			//reference-update step below must not bank a stale last_increment for a POI that
+			//didn't actually produce a valid one this frame -- see that block for why
+			std::vector<bool> succeeded_this_frame(n, false);
+
 			for (int i = 0; i < n; i++)
 			{
 				if (working[i].result.zncc <= 0.f)
 				{
 					//correlation failed outright for this POI this frame -- freeze its
 					//previous cumulative value and leave last_increment untouched (so the
-					//next frame's initial guess still comes from the last known-good state)
+					//next frame's initial guess still comes from the last known-good state).
+					//Still surface the failure to the caller (previously this left
+					//poi_queue[i].result untouched, so a caller reading the result after
+					//compute() returned would see stale data from an earlier successful frame
+					//with no indication this frame's correlation actually failed).
+					poi_queue[i].result = working[i].result;
 					continue;
 				}
 
@@ -102,6 +112,8 @@ namespace opencorr
 				if (jump > jump_tolerance)
 				{
 					status.jump_rejected_count++;
+					poi_queue[i].result = working[i].result;
+					poi_queue[i].result.zncc = -7.f; //rejected by sequence-tracker jump-tolerance, see oc_dic.h
 					continue; //don't accept this frame's result for this POI
 				}
 
@@ -115,6 +127,7 @@ namespace opencorr
 				poi_queue[i].deformation.u = cumulative_u[i] + last_increment_u[i];
 				poi_queue[i].deformation.v = cumulative_v[i] + last_increment_v[i];
 				poi_queue[i].result = working[i].result;
+				succeeded_this_frame[i] = true;
 			}
 
 			//reference-update decision: a percentile of the WHOLE field's ZNCC, not a single
@@ -140,6 +153,20 @@ namespace opencorr
 					{
 						for (int i = 0; i < n; i++)
 						{
+							//only bank a POI's displacement into the new reference if it
+							//actually produced a valid one THIS frame. Skipping this check
+							//used to bank whatever last_increment_u/v happened to be left over
+							//from an earlier successful frame for POIs that failed or were
+							//jump-rejected this frame -- silently re-anchoring them to a wrong
+							//position with no indication anything went wrong. A POI skipped
+							//here simply keeps its last known-good ref_x/ref_y/cumulative
+							//unchanged (an honest "assume no further motion since last
+							//verified" fallback, not a wrong nonzero one) and its result.zncc
+							//already reflects this frame's actual failure (see above), so the
+							//caller can tell it needs reseeding rather than silently trusting
+							//a corrupted position.
+							if (!succeeded_this_frame[i]) continue;
+
 							ref_x[i] += last_increment_u[i];
 							ref_y[i] += last_increment_v[i];
 							cumulative_u[i] += last_increment_u[i];
