@@ -39,6 +39,7 @@
 #include "oc_poi.h"
 #include "oc_point.h"
 #include "oc_sift.h"
+#include "oc_simplex.h"
 #include "oc_stereovision.h"
 #include "oc_strain.h"
 #include "oc_subset.h"
