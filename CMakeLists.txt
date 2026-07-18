@@ -9,7 +9,7 @@ find_package(OpenMP REQUIRED)
 find_package(Eigen3 REQUIRED)
 
 file(GLOB OPENCORR_SOURCES "src/*.cpp")
-add_library(opencorr STATIC ${OPENCORR_SOURCES})
+add_library(opencorr STATIC ${OPENCORR_SOURCES} deps/hypercine/hypercine.cpp)
 
 # OpenCorr's headers use `#include <Eigen>` (the umbrella header with no
 # subpath) rather than the conventional `#include <Eigen/Dense>`, so the
@@ -23,6 +23,14 @@ target_include_directories(opencorr PUBLIC
     ${EIGEN3_INCLUDE_DIRS}/Eigen
     ${CMAKE_CURRENT_SOURCE_DIR}/deps/nanoflann
 )
+
+target_include_directories(opencorr PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/deps/hypercine
+)
+
+# hypercine's storage_t is a compile-time choice (see deps/hypercine/hypercine.h);
+# float matches Image2D's Eigen::MatrixXf representation.
+target_compile_definitions(opencorr PRIVATE USE_FLOAT_STORAGE=1)
 
 target_link_libraries(opencorr PUBLIC
     ${OpenCV_LIBS}

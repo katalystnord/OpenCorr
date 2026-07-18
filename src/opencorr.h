@@ -19,6 +19,7 @@
 
 #include "oc_array.h"
 #include "oc_calibration.h"
+#include "oc_cine.h"
 #include "oc_cubic_bspline.h"
 #include "oc_deformation.h"
 #include "oc_dic.h"
