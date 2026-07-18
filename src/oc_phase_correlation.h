@@ -70,6 +70,13 @@ namespace opencorr
 		//(near zero) mean no clear dominant translation was found (e.g. the images are
 		//identical, or too dissimilar/low-texture for phase correlation to lock onto
 		//anything)
+		//
+		//Recommended usage: this is not POI-based and never touches any POI2D, so its output
+		//cannot seed ReliabilityGuided2D directly (which requires an already-solved POI with
+		//result.zncc>0, per its own docs) -- write the returned u/v into every POI's
+		//deformation.u/v as a uniform initial guess BEFORE running a per-POI solver
+		//(ICGN2D1/FFTCC2D/etc.) over the whole queue; the actual per-POI ZNCC-bearing
+		//solution still has to come from that solver pass.
 		float compute(Image2D& ref_img, Image2D& tar_img, float& u, float& v);
 
 	private:

@@ -156,9 +156,15 @@ namespace opencorr
 			max_real = next_real;
 		}
 
-		//convert wrapped FFT bin index to a signed pixel displacement
-		u = (peak_x >= width / 2) ? (float)(width - peak_x) : -(float)peak_x;
-		v = (peak_y >= height / 2) ? (float)(height - peak_y) : -(float)peak_y;
+		//convert wrapped FFT bin index to a signed pixel displacement. The threshold must be
+		//the true real-valued midpoint width/2.0, not integer-divided width/2: for odd width
+		//(e.g. 7), integer division floors 3.5 to 3, so peak_x==3 (the correct threshold
+		//boundary) was wrongly routed into the wraparound branch, sign-flipping the most-
+		//negative representable displacement (peak_x=3 should give u=-3, not width-3=4).
+		//peak_x > (width-1)/2 (integer division) gives the same split as the old code for
+		//even width (unaffected) but the correct one for odd width.
+		u = (peak_x > (width - 1) / 2) ? (float)(width - peak_x) : -(float)peak_x;
+		v = (peak_y > (height - 1) / 2) ? (float)(height - peak_y) : -(float)peak_y;
 
 		return max_real;
 	}

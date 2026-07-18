@@ -39,6 +39,16 @@ namespace opencorr
 				return a.zncc < b.zncc;
 			}
 		};
+
+		//true if zncc is exactly one of the solvers' own named failure codes (oc_dic.h),
+		//as opposed to a real (if possibly low or negative) computed correlation value.
+		//Exact float comparison is safe here since these are hardcoded literal constants
+		//the solvers assign directly (e.g. `poi->result.zncc = -3.f;`), never a value
+		//arrived at through computation that could drift off the literal.
+		bool isSolverFailureSentinel(float zncc)
+		{
+			return zncc == -1.f || zncc == -2.f || zncc == -3.f || zncc == -4.f || zncc == -5.f;
+		}
 	}
 
 	ReliabilityGuided2D::ReliabilityGuided2D(int poi_number_x, int poi_number_y)
@@ -108,32 +118,43 @@ namespace opencorr
 				float guess_u = cur_poi.deformation.u + dx * cur_poi.deformation.ux + dy * cur_poi.deformation.uy;
 				float guess_v = cur_poi.deformation.v + dx * cur_poi.deformation.vx + dy * cur_poi.deformation.vy;
 
-				neighbor.deformation.u = guess_u;
-				neighbor.deformation.v = guess_v;
-				neighbor.deformation.ux = cur_poi.deformation.ux;
-				neighbor.deformation.uy = cur_poi.deformation.uy;
-				neighbor.deformation.vx = cur_poi.deformation.vx;
-				neighbor.deformation.vy = cur_poi.deformation.vy;
-				neighbor.result.zncc = 0.f; //clear any stale negative sentinel so the solver's own precondition check doesn't reject this POI outright
+				//solve on a local copy, not poi_queue[nidx] directly: if solver.compute()
+				//throws (e.g. ICGN2D1's own "CPU thread ID over limit" precondition throw),
+				//the caller-owned poi_queue[nidx] must be left exactly as it was found, not
+				//holding a half-written guess that's indistinguishable from an unreached POI
+				POI2D trial(neighbor);
+				trial.deformation.u = guess_u;
+				trial.deformation.v = guess_v;
+				trial.deformation.ux = cur_poi.deformation.ux;
+				trial.deformation.uy = cur_poi.deformation.uy;
+				trial.deformation.vx = cur_poi.deformation.vx;
+				trial.deformation.vy = cur_poi.deformation.vy;
+				trial.result.zncc = 0.f; //clear any stale negative sentinel so the solver's own precondition check doesn't reject this POI outright
 
-				solver.compute(&neighbor);
+				solver.compute(&trial);
 
-				float jump = std::sqrt((neighbor.deformation.u - guess_u) * (neighbor.deformation.u - guess_u)
-					+ (neighbor.deformation.v - guess_v) * (neighbor.deformation.v - guess_v));
+				float jump = std::sqrt((trial.deformation.u - guess_u) * (trial.deformation.u - guess_u)
+					+ (trial.deformation.v - guess_v) * (trial.deformation.v - guess_v));
+
+				neighbor = trial;
 
 				if (neighbor.result.zncc > zncc_threshold && jump < delta_disp_tolerance)
 				{
 					queue.push({ nidx, neighbor.result.zncc });
 					accepted++;
 				}
-				else if (neighbor.result.zncc >= 0.f)
+				else if (!isSolverFailureSentinel(neighbor.result.zncc))
 				{
-					//only stamp -6 when the solver itself nominally succeeded (zncc>=0) but
-					//this propagation's own quality/jump gate rejected it -- if the solver
-					//already produced a specific failure sentinel (-3/-4/-5, see oc_dic.h),
-					//preserve it instead of overwriting it, so a caller can tell "the
-					//correlation itself failed" apart from "it succeeded but propagation
-					//rejected the result," which call for different tuning responses
+					//only stamp -6 when the solver DIDN'T already report one of its own named
+					//failure codes (-1/-2/-3/-4/-5, see oc_dic.h) -- exact-matched, since those
+					//are hardcoded literal constants the solvers assign directly, not computed
+					//values that could drift. A solver can legitimately converge (hit none of
+					//its own failure branches) yet still report a low or even negative ZNCC for
+					//a genuinely poor match -- zncc>=0 is not a reliable "solver succeeded" test
+					//by itself, so checking against the specific known sentinel values instead
+					//of a threshold is what actually distinguishes "the correlation itself
+					//failed" from "it succeeded (however poorly) but propagation rejected it,"
+					//which call for different tuning responses
 					neighbor.result.zncc = -6.f;
 				}
 			}

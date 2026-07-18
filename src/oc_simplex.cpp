@@ -143,9 +143,15 @@ namespace opencorr
 			}
 			else if (ytry >= cost[inhi])
 			{
-				//reflection didn't help -- try contracting toward the centroid
+				//reflection didn't help -- try contracting toward the centroid.
+				//fac=0.5 in the same fac1=(1-fac)/n, fac2=fac1-fac pattern reflection (fac=-1)
+				//and expansion (fac=2) above both correctly follow -- this branch previously
+				//hardcoded fac1=0.5f, fac2=-0.5f with no /num_dofs, which computed a point
+				//roughly num_dofs times too far from the centroid instead of the intended
+				//midpoint between the centroid and the worst vertex, so contraction almost
+				//never succeeded and every call fell straight through to the shrink step below.
 				float ysave = cost[ihi];
-				fac1 = 0.5f, fac2 = -0.5f;
+				fac1 = 0.5f / num_dofs, fac2 = fac1 - 0.5f;
 				for (int j = 0; j < num_dofs; j++)
 				{
 					ptry[j] = column_sums[j] * fac1 - points[ihi][j] * fac2;
@@ -336,8 +342,16 @@ namespace opencorr
 		int subset_ry = subset_radius_y;
 
 		if (poi->y - subset_ry < 0 || poi->x - subset_rx < 0
-			|| poi->y + subset_ry > ref_img->height - 1 || poi->x + subset_rx > ref_img->width - 1)
+			|| poi->y + subset_ry > ref_img->height - 1 || poi->x + subset_rx > ref_img->width - 1
+			|| std::fabs(poi->deformation.u) >= ref_img->width || std::fabs(poi->deformation.v) >= ref_img->height
+			|| std::isnan(poi->deformation.u) || std::isnan(poi->deformation.v))
 		{
+			//matches ICGN2D1::compute(POI2D*)'s own precondition check (oc_icgn.cpp) -- without
+			//this, a NaN or wildly out-of-range incoming initial guess (e.g. from a degenerate
+			//upstream POI in ReliabilityGuided2D/SequenceTracker2D) would flow straight into
+			//Nelder-Mead instead of being cleanly rejected, and NaN comparisons in the
+			//optimizer's vertex selection are all false, so it would silently return a
+			//garbage "best" vertex rather than erroring
 			poi->result.zncc = -3.f;
 			return;
 		}

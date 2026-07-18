@@ -89,10 +89,23 @@ namespace opencorr
 		//given in images[0]'s coordinate system on input; on return, each POI's
 		//deformation.u/v holds CUMULATIVE displacement relative to images[0] (matching
 		//ncorr's own Lagrangian-perspective output convention), and result.zncc holds the
-		//last successfully-computed frame's quality. solver: an already-constructed
-		//DIC-derived solver (e.g. ICGN2D1) -- setImages()/prepare() are called on it
-		//internally for each consecutive frame pair actually needed (i.e. once per frame if
-		//the reference never updates, since the reference/target pair changes every frame
+		//last successfully-computed frame's quality.
+		//
+		//poi_queue.deformation.u/v on INPUT is treated as displacement already accumulated
+		//from BEFORE images[0] (e.g. resuming a longer sequence split across multiple calls)
+		//-- it is added to, not overwritten by, what this call computes. Do NOT feed the
+		//output of a single-pair solve (ReliabilityGuided2D, or ICGN2D1/FFTCC2D directly) on
+		//images[0]->images[1] into this same poi_queue and then include that same pair in
+		//images: the first tracked frame would re-solve images[0]->images[1] again from
+		//scratch and add it on top of the already-present value, roughly doubling it. Either
+		//start poi_queue at zero deformation and let this call solve every frame itself, or
+		//if genuinely resuming after a prior solve, re-base poi.x/y to the already-tracked
+		//position first and leave deformation.u/v holding only the prior cumulative amount.
+		//
+		//solver: an already-constructed DIC-derived solver (e.g. ICGN2D1) -- setImages()/
+		//prepare() are called on it internally for each consecutive frame pair actually
+		//needed (i.e. once per frame if the reference never updates, since the reference/
+		//target pair changes every frame
 		//regardless).  Returns one FrameStatus per frame beyond the first.
 		std::vector<FrameStatus> compute(std::vector<Image2D>& images, std::vector<POI2D>& poi_queue, DIC& solver);
 

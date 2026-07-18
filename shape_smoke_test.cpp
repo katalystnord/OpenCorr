@@ -70,19 +70,32 @@ int main()
 		return fabs(area) / 2.f;
 	};
 
+	//Polygon2D now classifies every boundary pixel as inside (a deliberate fix for a prior
+	//inconsistency where different edges of the same simple polygon resolved oppositely --
+	//see oc_shape.cpp), so the discrete pixel count is the CLOSED-boundary count, not the
+	//continuous shoelace area: an NxN axis-aligned square with all four edges included is
+	//(N+1)^2 pixels, not N^2 -- the classic fencepost distinction between a continuous area
+	//and an inclusive discrete grid. Asserting the exact hand-derived count (rather than a
+	//loose tolerance around the continuous area) both confirms the fix and pins the
+	//convention down precisely.
 	float square_analytic = shoelaceArea(sq_x, sq_y);
 	int square_pixels = (int)square.getOwnedPixels().size();
-	cout << "  square: analytic area=" << square_analytic << ", pixel count=" << square_pixels << endl;
-	//pixel-grid coverage of a continuous area is inherently approximate (off by roughly the
-	//perimeter's worth of boundary pixels); within 10% is a reasonable bar for a 10x10 shape
-	bool square_area_ok = fabs(square_pixels - square_analytic) < 0.15f * square_analytic;
+	int square_expected = 11 * 11; //vertices at (10,10)-(20,20): 11 integer values per axis, inclusive
+	cout << "  square: analytic area=" << square_analytic << ", pixel count=" << square_pixels
+		<< " (expected, boundary-inclusive: " << square_expected << ")" << endl;
+	bool square_area_ok = square_pixels == square_expected;
 	cout << "  " << (square_area_ok ? "PASS" : "FAIL") << endl;
 	if (!square_area_ok) failures++;
 
 	float l_analytic = shoelaceArea(l_x, l_y);
 	int l_pixels = (int)lshape.getOwnedPixels().size();
-	cout << "  L-shape: analytic area=" << l_analytic << ", pixel count=" << l_pixels << endl;
-	bool l_area_ok = fabs(l_pixels - l_analytic) < 0.20f * l_analytic;
+	//hand-derived: bottom band x in [0,10] y in [0,5] inclusive (11*6=66) plus the new rows
+	//the left arm adds above it, x in [0,5] y in [6,10] inclusive (6*5=30, y=5 row already
+	//counted in the bottom band) = 96
+	int l_expected = 11 * 6 + 6 * 5;
+	cout << "  L-shape: analytic area=" << l_analytic << ", pixel count=" << l_pixels
+		<< " (expected, boundary-inclusive: " << l_expected << ")" << endl;
+	bool l_area_ok = l_pixels == l_expected;
 	cout << "  " << (l_area_ok ? "PASS" : "FAIL") << endl;
 	if (!l_area_ok) failures++;
 

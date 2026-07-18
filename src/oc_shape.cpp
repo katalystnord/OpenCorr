@@ -40,6 +40,21 @@ namespace opencorr
 
 	std::vector<Point2D> Shape2D::getOwnedPixels() const
 	{
+		//Neither Circle2D nor Polygon2D's constructors bound how large a shape can be (only
+		//that radius>0 / at least 3 vertices) -- without this check, a single malformed value
+		//(e.g. a huge radius from bad user input in a GUI ROI tool) would make this loop
+		//iterate a practically unbounded bounding box with no way for the caller to detect or
+		//bound it in advance. The limit is generous (covers any realistic image many times
+		//over) and computed in long long to avoid overflow on the multiplication itself.
+		long long bbox_width = (long long)getMaxX() - getMinX() + 1;
+		long long bbox_height = (long long)getMaxY() - getMinY() + 1;
+		const long long max_bbox_pixels = 200000000LL; //200 megapixels
+		if (bbox_width <= 0 || bbox_height <= 0 || bbox_width * bbox_height > max_bbox_pixels)
+		{
+			throw std::string("Shape2D::getOwnedPixels(): bounding box is invalid or unreasonably large ("
+				+ std::to_string(bbox_width) + " x " + std::to_string(bbox_height) + ")");
+		}
+
 		std::vector<Point2D> pixels;
 		for (int y = getMinY(); y <= getMaxY(); y++)
 		{
@@ -83,6 +98,29 @@ namespace opencorr
 
 	bool Polygon2D::contains(int x, int y) const
 	{
+		//Check the boundary explicitly and first, with exact integer arithmetic (vertices and
+		//query points are both integers here, so this is exact, no floating-point tie-break
+		//involved). The winding-angle test below is only reliable for points strictly inside
+		//or outside: a point exactly on an edge lands on atan2's tie-break for the
+		//anti-parallel edge-vector pair at that edge, and different edges of the very same
+		//simple polygon can tie-break oppositely -- verified concretely: on an axis-aligned
+		//rectangle, a boundary point on one edge sums to ~0 (excluded) while a boundary point
+		//on another edge sums to ~2*pi (included), an inconsistency with no geometric meaning.
+		//Boundary points are classified as inside (a standard, deterministic convention).
+		for (int i = 0; i < num_vertices; i++)
+		{
+			long long ex = vertex_x[i + 1] - vertex_x[i], ey = vertex_y[i + 1] - vertex_y[i];
+			long long px = x - vertex_x[i], py = y - vertex_y[i];
+			long long cross = ex * py - ey * px;
+			if (cross == 0)
+			{
+				//collinear with this edge's line -- inside iff also within the edge's span
+				long long dot = px * ex + py * ey;
+				long long len2 = ex * ex + ey * ey;
+				if (dot >= 0 && dot <= len2) return true;
+			}
+		}
+
 		//winding-angle test (DICe::Polygon::deactivate_pixels()): sum the signed angle
 		//subtended by each edge as seen from (x, y); the point is inside iff that sum's
 		//magnitude is (approximately) a full turn (pi here, since each edge contributes at

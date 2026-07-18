@@ -76,10 +76,17 @@ namespace opencorr
 		//score (FeatureAffine2D, which does feature-based matching rather than a
 		//correlation-coefficient match) are NOT usable as a seed source here: zncc==0 is
 		//indistinguishable from a POI that was never computed at all (POI2D::clear()'s own
-		//default), so such a seed is silently skipped rather than accepted. solver.compute(POI2D*)
-		//is called to refine each newly-reached POI -- pass an already prepare()'d
-		//ICGN2D1/ICGN2D2/etc. Returns the number of POIs the flood-fill successfully reached
-		//and accepted (excluding the seeds).
+		//default), so such a seed is silently skipped rather than accepted.
+		//
+		//solver.compute(POI2D*) is called to refine each newly-reached POI -- pass an already
+		//prepare()'d ICGN2D1/ICGN2D2/ICLM2D1/2D2/SimplexMatch2D. The solver MUST populate
+		//deformation.ux/uy/vx/vy on success, not just u/v: the flood-fill's Taylor
+		//extrapolation reads a solved neighbor's own gradient to seed the NEXT hop, so a
+		//translation-only solver (FFTCC2D) silently propagates a stale or zero gradient
+		//across the whole filled region instead of erroring -- do not pass FFTCC2D here.
+		//
+		//Returns the number of POIs the flood-fill successfully reached and accepted
+		//(excluding the seeds).
 		int compute(std::vector<POI2D>& poi_queue, const std::vector<int>& seed_indices, DIC& solver);
 
 	private:
