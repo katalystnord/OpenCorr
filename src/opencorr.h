@@ -36,6 +36,7 @@
 #include "oc_io.h"
 #include "oc_nearest_neighbor.h"
 #include "oc_nr.h"
+#include "oc_phase_correlation.h"
 #include "oc_poi.h"
 #include "oc_point.h"
 #include "oc_sift.h"
