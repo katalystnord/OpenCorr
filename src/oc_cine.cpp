@@ -21,20 +21,28 @@
 
 namespace opencorr
 {
-	Cine2D::Cine2D(const std::string& file_path)
+	Cine2D::Cine2D(const std::string& file_path, Cine10BitConversion ten_bit_conversion)
 	{
-		//TO_8_BIT is only meaningful for 16-bit source cines (it sets the
-		//linear scale factor down to 8 bits); 10-bit-packed sources need one
-		//of the dedicated 10-bit conversion modes to land in the same 8-bit
-		//range. Bit depth isn't known until the header is read, so probe it
-		//with a throwaway header-only construction first, then reconstruct
-		//with the right conversion mode if needed. 8-bit source cines are
-		//unaffected by conversion_type either way.
+		//TO_8_BIT and 10-bit-packed sources: contrary to what an earlier version of this
+		//comment claimed, TO_8_BIT is NOT 16-bit-only -- hypercine.cpp maps it to the same
+		//quad_10bit_to_8bit lookup table QUAD_10_TO_8 uses for 10-bit-packed sources too
+		//(hypercine.cpp:353-354). So for 10-bit-packed files, TO_8_BIT and Quadratic are the
+		//same curve; Linear is a genuinely different one (LINEAR_10_TO_8, its own lookup
+		//table). Which curve is actually correct depends on the recording and isn't
+		//knowable from the file itself -- see Cine10BitConversion's doc comment in oc_cine.h.
+		//
+		//Bit depth isn't known until the header is read, so probe it with a throwaway
+		//header-only construction first (using TO_8_BIT, harmless for 8-bit/16-bit sources
+		//and equivalent to Quadratic if the file turns out to be 10-bit-packed), then
+		//reconstruct with the caller's requested curve if it turns out to be 10-bit-packed.
 		hc = std::make_unique<hypercine::HyperCine>(file_path.c_str(), hypercine::HyperCine::TO_8_BIT);
-		if (hc->bit_depth() == hypercine::HyperCine::BIT_DEPTH_10_PACKED)
+		if (hc->bit_depth() == hypercine::HyperCine::BIT_DEPTH_10_PACKED
+			&& ten_bit_conversion == Cine10BitConversion::Linear)
 		{
 			hc = std::make_unique<hypercine::HyperCine>(file_path.c_str(), hypercine::HyperCine::LINEAR_10_TO_8);
 		}
+		//else: already open with the quadratic curve (TO_8_BIT), which is what Quadratic
+		//requests too -- no second construction needed
 	}
 
 	Cine2D::~Cine2D() = default;

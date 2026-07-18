@@ -114,7 +114,10 @@ namespace opencorr
 			}
 		}
 
-		double scale = std::sqrt(0.5 * M_PI) / (6.0 * (width - 2) * (height - 2));
+		//avoid M_PI: MSVC's <cmath> only defines it when _USE_MATH_DEFINES is set
+		//before the include, which nothing in this build sets
+		static const double pi = std::acos(-1.0);
+		double scale = std::sqrt(0.5 * pi) / (6.0 * (width - 2) * (height - 2));
 		return (float)(scale * sum_abs_response);
 	}
 
@@ -184,6 +187,11 @@ namespace opencorr
 			|| poi->y - subset_ry < 0 || poi->x - subset_rx < 0
 			|| poi->y + subset_ry > ref_img->height - 1 || poi->x + subset_rx > ref_img->width - 1)
 		{
+			//not computed -- explicit sentinels rather than leaving whatever POI2D::clear()
+			//zero-initialized, or (if this POI2D is being reused across a sequence) a stale
+			//value from a previously-successful compute() call on the same object
+			poi->result.sigma = -1.f;
+			poi->result.beta = 0.f;
 			return;
 		}
 
@@ -215,10 +223,27 @@ namespace opencorr
 		instance->ref_subset->fill(ref_img);
 		float ref_mean_norm = instance->ref_subset->zeroMeanNorm();
 
+		if (ref_mean_norm <= 0.f)
+		{
+			//degenerate (near-uniform-intensity) subset: same condition sigma already
+			//flags via min_grad_energy above -- znssd() divides by ref_mean_norm and its
+			//square, so proceeding here would silently produce NaN/Inf instead of a sentinel
+			poi->result.beta = 0.f;
+			return;
+		}
+
 		instance->tar_subset->center = (Point2D)*poi;
 
 		Deformation2D1 converged(poi->deformation.u, poi->deformation.ux, poi->deformation.uy,
 			poi->deformation.v, poi->deformation.vx, poi->deformation.vy);
+
+		//the rotation probe perturbs uy/vx (a spatial gradient term), which induces a
+		//displacement at the subset boundary of ~radius*rotation_step -- scaling it down by
+		//the subset radius keeps that boundary displacement comparable in magnitude to the
+		//flat `perturbation` the u/v probes induce everywhere, regardless of subset size, so
+		//d_u/d_v/d_theta stay comparable to each other and beta stays comparable across POIs
+		//solved with different subset radii
+		float rotation_step = perturbation / (float)std::max(1, std::max(subset_rx, subset_ry));
 
 		float d_u = 0.f, d_v = 0.f, d_theta = 0.f;
 		{
@@ -239,10 +264,10 @@ namespace opencorr
 			//infinitesimal rotation: antisymmetric perturbation of the shear terms (uy, vx),
 			//holding u, v, and the symmetric (stretch) terms ux, vy fixed
 			Deformation2D1 plus(converged), minus(converged);
-			plus.setDeformation(converged.u, converged.ux, converged.uy - perturbation, converged.v, converged.vx + perturbation, converged.vy);
-			minus.setDeformation(converged.u, converged.ux, converged.uy + perturbation, converged.v, converged.vx - perturbation, converged.vy);
+			plus.setDeformation(converged.u, converged.ux, converged.uy - rotation_step, converged.v, converged.vx + rotation_step, converged.vy);
+			minus.setDeformation(converged.u, converged.ux, converged.uy + rotation_step, converged.v, converged.vx - rotation_step, converged.vy);
 			d_theta = (znssd(instance.get(), poi, ref_mean_norm, plus, subset_rx, subset_ry)
-				- znssd(instance.get(), poi, ref_mean_norm, minus, subset_rx, subset_ry)) / (2.f * perturbation);
+				- znssd(instance.get(), poi, ref_mean_norm, minus, subset_rx, subset_ry)) / (2.f * rotation_step);
 		}
 
 		poi->result.beta = std::sqrt(d_u * d_u + d_v * d_v + d_theta * d_theta);
@@ -251,7 +276,14 @@ namespace opencorr
 	void Uncertainty2D::compute(std::vector<POI2D>& poi_queue)
 	{
 		int queue_length = (int)poi_queue.size();
-#pragma omp parallel for
+		//pin the parallel region to exactly thread_number threads: getInstance() indexes
+		//instance_pool by omp_get_thread_num(), and unlike a solver that typically runs right
+		//after the caller's own omp_set_num_threads() call, Uncertainty2D is meant to run as a
+		//distinct, later pass (e.g. a separate GUI action) where the ambient OpenMP thread
+		//count could plausibly no longer match what this instance was constructed with -- a
+		//mismatch throws from inside the parallel region, which is undefined behavior (in
+		//practice, std::terminate) rather than a catchable error
+#pragma omp parallel for num_threads(thread_number)
 		for (int i = 0; i < queue_length; i++)
 		{
 			compute(&poi_queue[i]);

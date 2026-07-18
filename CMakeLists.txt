@@ -24,13 +24,20 @@ target_include_directories(opencorr PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/deps/nanoflann
 )
 
-target_include_directories(opencorr PRIVATE
+# PUBLIC, not PRIVATE: oc_cine.h only forward-declares hypercine::HyperCine so
+# normal consumers never need this, but a downstream consumer (SurView) reaching
+# for cine metadata Cine2D's minimal API doesn't expose (frame rate, trigger time,
+# etc.) may need to include hypercine.h directly -- if USE_FLOAT_STORAGE weren't
+# propagated to them too, storage_t would be undefined in their translation unit,
+# or worse, silently resolve to a different type than what libopencorr.a was
+# actually compiled with (an ODR/ABI mismatch).
+target_include_directories(opencorr PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/deps/hypercine
 )
 
 # hypercine's storage_t is a compile-time choice (see deps/hypercine/hypercine.h);
 # float matches Image2D's Eigen::MatrixXf representation.
-target_compile_definitions(opencorr PRIVATE USE_FLOAT_STORAGE=1)
+target_compile_definitions(opencorr PUBLIC USE_FLOAT_STORAGE=1)
 
 target_link_libraries(opencorr PUBLIC
     ${OpenCV_LIBS}

@@ -129,6 +129,17 @@ namespace opencorr
 
 	float CameraCalibrator::calibrate(Calibration& camera)
 	{
+		if (mono_image_points.empty())
+		{
+			//addImage() silently excludes failed detections rather than treating them as an
+			//error (matches DICe's own "exclude and continue" behavior) -- so it's reachable
+			//in normal use for every image in a batch to fail (bad lighting, wrong
+			//board_width/board_height). Without this check, cv::calibrateCamera's own
+			//internal CV_Assert(nimages>0) throws an uncaught cv::Exception instead of a
+			//clear, catchable error.
+			throw std::string("CameraCalibrator::calibrate(): no successfully-detected images to calibrate from");
+		}
+
 		std::vector<std::vector<cv::Point3f>> object_points(mono_image_points.size(), object_points_template);
 
 		cv::Mat camera_matrix, dist_coeffs;
@@ -146,6 +157,11 @@ namespace opencorr
 
 	float CameraCalibrator::calibrateStereo(Calibration& left_camera, Calibration& right_camera, CameraExtrinsics& right_extrinsics)
 	{
+		if (stereo_left_points.empty())
+		{
+			throw std::string("CameraCalibrator::calibrateStereo(): no successfully-detected image pairs to calibrate from");
+		}
+
 		std::vector<std::vector<cv::Point3f>> object_points(stereo_left_points.size(), object_points_template);
 
 		cv::Mat camera_matrix_l = cv::initCameraMatrix2D(object_points, stereo_left_points, image_size, 0);

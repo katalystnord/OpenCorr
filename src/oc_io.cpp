@@ -291,10 +291,25 @@ namespace opencorr
 			current_POI.deformation.v = key_buffer[3];
 
 			int current_index = 4;
-			int array_size = (int)(sizeof(current_POI.result.r) / sizeof(current_POI.result.r[0]));
+			int max_result_size = (int)(sizeof(current_POI.result.r) / sizeof(current_POI.result.r[0]));
+			int strain_size = (int)(sizeof(current_POI.strain.e) / sizeof(current_POI.strain.e[0]));
+			//infer the actual result-column count from the row width rather than assuming
+			//the current struct size: a legacy file saved before sigma/beta were added has
+			//two fewer result columns (6 vs 8), and reading it against the current 8-float
+			//size would misread strain/subset_radius from the wrong offsets entirely
+			int array_size = (int)key_buffer.size() - current_index - strain_size - 2;
+			if (array_size > max_result_size) array_size = max_result_size;
+			if (array_size < 0) array_size = 0;
 			for (int i = 0; i < array_size; i++)
 			{
 				current_POI.result.r[i] = key_buffer[current_index + i];
+			}
+			if (array_size < max_result_size)
+			{
+				//legacy file predates sigma/beta -- mark them as not computed rather than
+				//leaving whatever POI2D::clear() happened to zero-initialize
+				current_POI.result.sigma = -1.f;
+				current_POI.result.beta = 0.f;
 			}
 
 			current_index += array_size;
@@ -335,6 +350,8 @@ namespace opencorr
 			file_out << "iteration" << delimiter;
 			file_out << "convergence" << delimiter;
 			file_out << "feature" << delimiter;
+			file_out << "sigma" << delimiter;
+			file_out << "beta" << delimiter;
 
 			file_out << "exx" << delimiter;
 			file_out << "eyy" << delimiter;
