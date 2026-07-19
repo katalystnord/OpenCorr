@@ -868,18 +868,23 @@ namespace opencorr
 		//cv::stereoCalibrate() itself only accepts one combined imageSize (an OpenCV API
 		//limitation, not something this wrapper can route around) -- left_image_size is used,
 		//matching the "world origin at the left camera" convention already used throughout
-		//this class. For a genuinely mismatched-resolution rig this is an approximation; each
-		//camera's own intrinsics (camera_matrix_l/r above, via initCameraMatrix2D) and its own
-		//prepare() call below still use that camera's own correct size.
+		//this class. For a genuinely mismatched-resolution rig this is an approximation.
 		if (left_image_size != right_image_size)
 		{
 			std::cerr << "CameraCalibrator: left/right image sizes differ (" << left_image_size << " vs "
 				<< right_image_size << "); cv::stereoCalibrate() only accepts one combined size, using left's" << std::endl;
 		}
 
+		//CALIB_USE_INTRINSIC_GUESS: without it, cv::stereoCalibrate() silently DISCARDS
+		//camera_matrix_l/camera_matrix_r on input and derives its own initial guess for BOTH
+		//cameras internally from imageSize alone (confirmed empirically: with flags=0, seeding
+		//camera_matrix_l/r with garbage vs. with the correct initCameraMatrix2D() result above
+		//produces bit-identical output) -- silently throwing away the whole point of computing
+		//each camera's own per-image-size intrinsic guess just above. With this flag set, the
+		//already-correct per-camera guesses are used as the optimizer's actual starting point.
 		double rms = cv::stereoCalibrate(object_points, stereo_left_points, stereo_right_points,
 			camera_matrix_l, dist_l, camera_matrix_r, dist_r, left_image_size, R, T, E, F,
-			0, cv::TermCriteria(cv::TermCriteria::COUNT + cv::TermCriteria::EPS, 1000, 1e-7));
+			cv::CALIB_USE_INTRINSIC_GUESS, cv::TermCriteria(cv::TermCriteria::COUNT + cv::TermCriteria::EPS, 1000, 1e-7));
 
 		left_camera.clear();
 		fillIntrinsics(camera_matrix_l, dist_l, left_camera.intrinsics);

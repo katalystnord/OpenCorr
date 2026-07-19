@@ -322,6 +322,69 @@ int main()
 		if (!pair_added) failures++;
 	}
 
+	//--- regression: calibrateStereo() must actually use each camera's own per-image-size
+	//initCameraMatrix2D() guess as the optimizer's real starting point, not silently discard
+	//it -- cv::stereoCalibrate() without CALIB_USE_INTRINSIC_GUESS ignores the passed-in
+	//cameraMatrix1/cameraMatrix2 entirely and derives its own initial guess for BOTH cameras
+	//from a single shared imageSize (confirmed empirically against OpenCV directly, not just
+	//from its docs: seeding with a correct vs. a deliberately garbage cameraMatrix produced
+	//bit-identical output under flags=0). Exercises the actual failure scenario -- a rig
+	//with genuinely different resolution AND intrinsics per camera -- rather than just
+	//re-checking the same-resolution baseline case above.
+	cout << endl << "=== Mismatched-resolution stereo pair must recover each camera's own intrinsics ===" << endl;
+	{
+		CameraCalibrator mismatched_stereo(board_width, board_height, square_size);
+		int right_width = 800, right_height = 600;
+		double right_fx = 1100.0, right_fy = 1100.0, right_cx = 400.0, right_cy = 300.0; //genuinely different from gt_camera_matrix
+		cv::Mat right_camera_matrix = (cv::Mat_<double>(3, 3) << right_fx, 0, right_cx, 0, right_fy, right_cy, 0, 0, 1);
+
+		int n_mismatched_poses = 12;
+		for (int i = 0; i < n_mismatched_poses; i++)
+		{
+			float tx = in_plane_shift(rng), ty = in_plane_shift(rng), tz = 500.f + (i % 4) * 120.f;
+			float rx = tilt(rng), ry = tilt(rng), rz = tilt(rng) * 0.5f;
+			cv::Mat rvec_l = (cv::Mat_<double>(3, 1) << rx, ry, rz);
+			cv::Mat tvec_l = (cv::Mat_<double>(3, 1) << tx - board_width * square_size / 2, ty - board_height * square_size / 2, tz);
+
+			cv::Mat R_l;
+			cv::Rodrigues(rvec_l, R_l);
+			cv::Mat R_r = r_rel * R_l;
+			cv::Mat T_r = r_rel * tvec_l + t_rel;
+			cv::Mat rvec_r;
+			cv::Rodrigues(R_r, rvec_r);
+
+			cv::Mat img_l = renderCheckerboard(board_width, board_height, square_size, gt_camera_matrix, rvec_l, tvec_l, image_width, image_height);
+			cv::Mat img_r = renderCheckerboard(board_width, board_height, square_size, right_camera_matrix, rvec_r, T_r, right_width, right_height);
+
+			string path_l = "/tmp/oc_cal_mismatched_stereo_l_" + to_string(i) + ".png";
+			string path_r = "/tmp/oc_cal_mismatched_stereo_r_" + to_string(i) + ".png";
+			cv::imwrite(path_l, img_l);
+			cv::imwrite(path_r, img_r);
+			mismatched_stereo.addImagePair(path_l, path_r);
+		}
+
+		cout << "  " << mismatched_stereo.pairCount() << " / " << n_mismatched_poses << " pairs used" << endl;
+
+		Calibration mismatched_left, mismatched_right;
+		CameraExtrinsics mismatched_extrinsics;
+		float mismatched_rms = mismatched_stereo.calibrateStereo(mismatched_left, mismatched_right, mismatched_extrinsics);
+		cout << "  RMS reprojection error: " << mismatched_rms << " px" << endl;
+		cout << "  recovered right intrinsics: fx=" << mismatched_right.intrinsics.fx
+			<< " fy=" << mismatched_right.intrinsics.fy << " cx=" << mismatched_right.intrinsics.cx
+			<< " cy=" << mismatched_right.intrinsics.cy
+			<< " (ground truth fx=" << right_fx << " fy=" << right_fy << " cx=" << right_cx << " cy=" << right_cy << ")" << endl;
+
+		bool mismatched_stereo_ok = mismatched_stereo.pairCount() >= 8
+			&& mismatched_rms < 1.0f
+			&& fabs(mismatched_right.intrinsics.fx - right_fx) < right_fx * 0.05
+			&& fabs(mismatched_right.intrinsics.fy - right_fy) < right_fy * 0.05
+			&& fabs(mismatched_right.intrinsics.cx - right_cx) < 15.0
+			&& fabs(mismatched_right.intrinsics.cy - right_cy) < 15.0;
+		cout << "  " << (mismatched_stereo_ok ? "PASS" : "FAIL")
+			<< ": right camera's own intrinsics recovered accurately despite differing from the left's" << endl;
+		if (!mismatched_stereo_ok) failures++;
+	}
+
 	//--- regression: calibrating from fewer than 2 views must throw a clear error, not
 	//silently hand cv::calibrateCamera/cv::stereoCalibrate a mathematically underdetermined
 	//problem that can numerically "succeed" while producing a degenerate/near-singular result ---
