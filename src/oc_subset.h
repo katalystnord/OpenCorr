@@ -17,6 +17,9 @@
 #ifndef _SUBSET_H_
 #define _SUBSET_H_
 
+#include <set>
+#include <utility>
+
 #include "oc_image.h"
 #include "oc_point.h"
 
@@ -37,6 +40,32 @@ namespace opencorr
 
 		void fill(Image2D* image);
 		float zeroMeanNorm();
+
+		//Dynamic obstruction/occlusion masking, ported from DICe's
+		//Subset::turn_off_obstructed_pixels()/turn_on_previously_obstructed_pixels()/
+		//is_obstructed_pixel() concept (dicengine/dice, src/base/DICe_Subset.h/.cpp,
+		//BSD-3-Clause) -- issue #14. Coordinates are GLOBAL image pixel coordinates, not
+		//subset-local: obstruction (a grip, tab, fixture, or off-plane object crossing the
+		//field of view) is a property of the scene at the current frame, shared by every
+		//subset/POI that happens to overlap it, not a per-subset-local concept -- matching
+		//how DICe's own obstructed-pixel set works.
+		//
+		//Scope note -- this is deliberately phase 1 (data model) only, mirroring
+		//oc_shape.h's own phase 1/phase 2 split for conformal ROI shapes: marking/querying
+		//which global pixels are currently obstructed. What's explicitly NOT included here
+		//is threading obstruction-awareness through fill()/zeroMeanNorm() (so an obstructed
+		//pixel is actually excluded from the subset's mean/norm) or through ICGN/ICLM's
+		//Hessian-build and ZNSSD loops (so it's excluded from the correlation itself) --
+		//that's a separate, larger, cross-cutting effort (the same one oc_shape.h's own
+		//scope note describes for conformal shapes) once there's a concrete need pulling it
+		//forward.
+		void markObstructed(int x, int y);
+		void clearObstructed(int x, int y);
+		void clearAllObstructed();
+		bool isObstructed(int x, int y) const;
+
+	private:
+		std::set<std::pair<int, int>> obstructed_pixels;
 	};
 
 	class Subset3D

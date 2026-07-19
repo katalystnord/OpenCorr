@@ -52,6 +52,26 @@ namespace opencorr
 		return sqrt(subset_sum);
 	}
 
+	void Subset2D::markObstructed(int x, int y)
+	{
+		obstructed_pixels.insert({ x, y });
+	}
+
+	void Subset2D::clearObstructed(int x, int y)
+	{
+		obstructed_pixels.erase({ x, y });
+	}
+
+	void Subset2D::clearAllObstructed()
+	{
+		obstructed_pixels.clear();
+	}
+
+	bool Subset2D::isObstructed(int x, int y) const
+	{
+		return obstructed_pixels.count({ x, y }) != 0;
+	}
+
 
 	//3D subvolume
 	Subset3D::Subset3D(Point3D center, int radius_x, int radius_y, int radius_z)
