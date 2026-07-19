@@ -93,9 +93,15 @@ namespace opencorr
 
 			for (int i = 0; i < n; i++)
 			{
-				if (working[i].result.zncc <= 0.f)
+				if (working[i].result.zncc < 0.f)
 				{
-					//correlation failed outright for this POI this frame -- freeze its
+					//correlation failed outright for this POI this frame (StatusFlag,
+					//oc_dic.h, defines STATUS_GOOD = 0: non-negative ZNCC is success --
+					//unlike ReliabilityGuided2D's own seed-selection check, which excludes
+					//zncc==0 for a different, POI2D::clear()-ambiguity reason, working[i]
+					//here was unconditionally just solved by solver.compute() above, so a
+					//zncc==0 result can only be a genuine FeatureAffine2D-style success,
+					//never an uncomputed default) -- freeze its
 					//previous cumulative value and leave last_increment untouched (so the
 					//next frame's initial guess still comes from the last known-good state).
 					//Still surface the failure to the caller (previously this left
@@ -138,7 +144,7 @@ namespace opencorr
 				std::vector<float> zncc_values;
 				zncc_values.reserve(n);
 				for (int i = 0; i < n; i++)
-					if (working[i].result.zncc > 0.f) zncc_values.push_back(working[i].result.zncc);
+					if (working[i].result.zncc >= 0.f) zncc_values.push_back(working[i].result.zncc);
 
 				if (!zncc_values.empty())
 				{

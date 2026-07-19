@@ -20,6 +20,33 @@
 using namespace opencorr;
 using namespace std;
 
+namespace
+{
+	//stand-in for FeatureAffine2D's own "succeeded via feature matching, not a
+	//correlation-coefficient score" convention (zncc == 0 on success) -- used below to
+	//verify SequenceTracker2D's per-frame success check doesn't misclassify it as a
+	//failure. A real FeatureAffine2D run wouldn't reliably produce exactly zncc==0 on
+	//demand for a targeted test, so this stub reproduces just the one property that
+	//matters here.
+	class ZeroZnccStubSolver : public DIC
+	{
+	public:
+		void prepare() override {}
+
+		void compute(POI2D* poi) override
+		{
+			poi->deformation.u += 1.f;
+			poi->deformation.v += 1.f;
+			poi->result.zncc = 0.f;
+		}
+
+		void compute(std::vector<POI2D>& poi_queue) override
+		{
+			for (auto& poi : poi_queue) compute(&poi);
+		}
+	};
+}
+
 int main()
 {
 	int failures = 0;
@@ -105,6 +132,27 @@ int main()
 	}
 	cout << "  " << (plausible ? "PASS" : "FAIL") << ": converged displacements are physically plausible (not runaway values)" << endl;
 	if (!plausible) failures++;
+
+	//--- regression: a solver whose own success convention is zncc==0 (FeatureAffine2D-
+	//style) must not be misclassified as "correlation failed outright" this frame ---
+	cout << endl << "=== Regression: zncc==0 success is not misclassified as frame failure ===" << endl;
+	{
+		vector<Image2D> two_frames = { images[0], images[1] };
+		vector<POI2D> poi_zero = { POI2D(Point2D(100.f, 100.f)) };
+		ZeroZnccStubSolver stub_solver;
+		SequenceTracker2D tracker;
+		tracker.setJumpTolerance(8.f);
+		auto status = tracker.compute(two_frames, poi_zero, stub_solver);
+
+		bool zero_ok = poi_zero[0].result.zncc == 0.f
+			&& status[0].jump_rejected_count == 0
+			&& poi_zero[0].deformation.u == 1.f && poi_zero[0].deformation.v == 1.f;
+		cout << "  zncc=" << poi_zero[0].result.zncc << " jump_rejected_count=" << status[0].jump_rejected_count
+			<< " u=" << poi_zero[0].deformation.u << " v=" << poi_zero[0].deformation.v << endl;
+		cout << "  " << (zero_ok ? "PASS" : "FAIL")
+			<< ": zncc==0 result is accepted (cumulative displacement updated), not frozen as a failure" << endl;
+		if (!zero_ok) failures++;
+	}
 
 	cout << endl << (failures == 0 ? "ALL CHECKS PASSED" : "SOME CHECKS FAILED") << " (" << failures << " failure(s))" << endl;
 	return failures == 0 ? 0 : 1;

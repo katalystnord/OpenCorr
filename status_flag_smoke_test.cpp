@@ -62,6 +62,29 @@ int main()
 	cout << "  " << (descriptions_ok ? "PASS" : "FAIL") << ": every code has a distinct, non-empty description" << endl;
 	if (!descriptions_ok) failures++;
 
+	//isFailureStatus() must agree with statusDescription() on every named code (both are
+	//driven by the same table in oc_dic.cpp) -- this is the actual regression test for the
+	//bug that motivated moving it out of ReliabilityGuided2D's own local
+	//isSolverFailureSentinel(), which had silently gone stale missing
+	//STATUS_RELIABILITY_GUIDED_REJECTED and STATUS_SEQUENCE_JUMP_REJECTED
+	bool sentinel_ok = true;
+	for (float code : codes)
+	{
+		if (code >= 0.f) continue; //the leading 1.f success placeholder
+		if (!isFailureStatus(code))
+		{
+			cout << "  isFailureStatus(" << code << ") incorrectly returned false" << endl;
+			sentinel_ok = false;
+		}
+	}
+	if (isFailureStatus(1.f) || isFailureStatus(0.f) || isFailureStatus(-0.3f))
+	{
+		cout << "  isFailureStatus() incorrectly flagged a genuine (non-sentinel) value as a failure" << endl;
+		sentinel_ok = false;
+	}
+	cout << "  " << (sentinel_ok ? "PASS" : "FAIL") << ": isFailureStatus() recognizes every named code, and only those" << endl;
+	if (!sentinel_ok) failures++;
+
 	//--- check 2: Hessian-singularity guard ---
 	cout << endl << "=== Motivating case: unidirectional-texture subset triggers STATUS_HESSIAN_SINGULAR ===" << endl;
 	int img_size = 80;

@@ -54,6 +54,45 @@ namespace opencorr
 	}
 
 
+	namespace
+	{
+		struct StatusEntry
+		{
+			StatusFlag code;
+			const char* description;
+		};
+
+		//single source of truth for both isFailureStatus() and statusDescription() below --
+		//rounding the float to a nearest-integer enum value instead (e.g. via std::lround)
+		//would misclassify a real, poor-but-genuinely-computed ZNCC that happens to fall
+		//near a sentinel (e.g. -0.7, from a solver that converged to a bad match) as that
+		//sentinel's specific failure reason, which would simply be false for that POI --
+		//so this stays exact-float-equality against the literal constants, same as before.
+		const StatusEntry kStatusTable[] = {
+			{ STATUS_INSUFFICIENT_FEATURES, "insufficient matched keypoints in subset" },
+			{ STATUS_DEGENERATE_INPUT, "degenerate input (RANSAC consensus too small, or near-uniform-intensity subset)" },
+			{ STATUS_INVALID_SUBSET_OR_GUESS, "subset out of image bounds, or invalid (NaN/out-of-range) initial guess" },
+			{ STATUS_MAX_ITERATIONS_REACHED, "iterative solver did not converge within its iteration cap" },
+			{ STATUS_NAN_IN_RESULT, "NaN in ZNCC or displacement result" },
+			{ STATUS_RELIABILITY_GUIDED_REJECTED, "rejected by reliability-guided propagation (quality or spatial jump-tolerance gate)" },
+			{ STATUS_SEQUENCE_JUMP_REJECTED, "rejected by sequence tracking (frame-to-frame jump-tolerance gate)" },
+			{ STATUS_HESSIAN_SINGULAR, "Hessian too ill-conditioned to invert reliably (ICGN only -- ICLM's Levenberg-Marquardt damping already handles this differently)" },
+		};
+	}
+
+	bool isFailureStatus(float zncc)
+	{
+		for (const auto& entry : kStatusTable)
+		{
+			if (zncc == (float)entry.code)
+			{
+				return true;
+			}
+		}
+
+		return false;
+	}
+
 	std::string statusDescription(float status_code)
 	{
 		if (status_code >= 0.f)
@@ -61,30 +100,13 @@ namespace opencorr
 			return "correlation succeeded";
 		}
 
-		//exact float equality against the named constants, matching
-		//ReliabilityGuided2D::isSolverFailureSentinel()'s (oc_reliability_guided.cpp) own
-		//convention -- these are hardcoded literal constants the solvers assign directly,
-		//never a value arrived at through computation that could drift off the literal.
-		//Rounding the float to a nearest-integer enum value instead (e.g. via std::lround)
-		//would misclassify a real, poor-but-genuinely-computed ZNCC that happens to fall
-		//near a sentinel (e.g. -0.7, from a solver that converged to a bad match) as that
-		//sentinel's specific failure reason, which would simply be false for that POI.
-		if (status_code == (float)STATUS_INSUFFICIENT_FEATURES)
-			return "insufficient matched keypoints in subset";
-		if (status_code == (float)STATUS_DEGENERATE_INPUT)
-			return "degenerate input (RANSAC consensus too small, or near-uniform-intensity subset)";
-		if (status_code == (float)STATUS_INVALID_SUBSET_OR_GUESS)
-			return "subset out of image bounds, or invalid (NaN/out-of-range) initial guess";
-		if (status_code == (float)STATUS_MAX_ITERATIONS_REACHED)
-			return "iterative solver did not converge within its iteration cap";
-		if (status_code == (float)STATUS_NAN_IN_RESULT)
-			return "NaN in ZNCC or displacement result";
-		if (status_code == (float)STATUS_RELIABILITY_GUIDED_REJECTED)
-			return "rejected by reliability-guided propagation (quality or spatial jump-tolerance gate)";
-		if (status_code == (float)STATUS_SEQUENCE_JUMP_REJECTED)
-			return "rejected by sequence tracking (frame-to-frame jump-tolerance gate)";
-		if (status_code == (float)STATUS_HESSIAN_SINGULAR)
-			return "Hessian too ill-conditioned to invert reliably (ICGN only -- ICLM's Levenberg-Marquardt damping already handles this differently)";
+		for (const auto& entry : kStatusTable)
+		{
+			if (status_code == (float)entry.code)
+			{
+				return entry.description;
+			}
+		}
 
 		//a real, computed (non-sentinel) negative ZNCC -- a poor but genuine match, not a failure
 		return "correlation succeeded (poor match)";

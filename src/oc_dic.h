@@ -55,6 +55,20 @@ namespace opencorr
 	//takes a float since that's the storage type of Result2D::zncc/Result3D::zncc.
 	std::string statusDescription(float status_code);
 
+	//true if zncc is exactly one of the solvers' own named failure codes (StatusFlag
+	//above), as opposed to a real (if possibly low or negative) computed correlation
+	//value -- a solver can legitimately converge (hit none of its own failure branches)
+	//yet still report a low or even negative ZNCC for a genuinely poor match, so
+	//zncc>=0 is not by itself a reliable "solver succeeded" test. Exact float equality
+	//is safe here since these are hardcoded literal constants the solvers assign
+	//directly, never a value arrived at through computation that could drift off the
+	//literal. Single source of truth shared with statusDescription() below -- both are
+	//driven by the same table, so they cannot silently drift apart the way this
+	//function's previous incarnation (ReliabilityGuided2D's own local
+	//isSolverFailureSentinel(), which had quietly gone stale missing two of the eight
+	//codes) did.
+	bool isFailureStatus(float zncc);
+
 	//structure for brute force searching
 	struct KeypointIndex
 	{

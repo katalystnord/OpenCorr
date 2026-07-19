@@ -39,18 +39,6 @@ namespace opencorr
 				return a.zncc < b.zncc;
 			}
 		};
-
-		//true if zncc is exactly one of the solvers' own named failure codes (StatusFlag,
-		//oc_dic.h), as opposed to a real (if possibly low or negative) computed correlation
-		//value. Exact float comparison is safe here since these are hardcoded literal
-		//constants the solvers assign directly (e.g. `poi->result.zncc = (float)STATUS_INVALID_SUBSET_OR_GUESS;`),
-		//never a value arrived at through computation that could drift off the literal.
-		bool isSolverFailureSentinel(float zncc)
-		{
-			return zncc == (float)STATUS_INSUFFICIENT_FEATURES || zncc == (float)STATUS_DEGENERATE_INPUT
-				|| zncc == (float)STATUS_INVALID_SUBSET_OR_GUESS || zncc == (float)STATUS_MAX_ITERATIONS_REACHED
-				|| zncc == (float)STATUS_NAN_IN_RESULT || zncc == (float)STATUS_HESSIAN_SINGULAR;
-		}
 	}
 
 	ReliabilityGuided2D::ReliabilityGuided2D(int poi_number_x, int poi_number_y)
@@ -145,18 +133,13 @@ namespace opencorr
 					queue.push({ nidx, neighbor.result.zncc });
 					accepted++;
 				}
-				else if (!isSolverFailureSentinel(neighbor.result.zncc))
+				else if (!isFailureStatus(neighbor.result.zncc))
 				{
 					//only stamp STATUS_RELIABILITY_GUIDED_REJECTED when the solver DIDN'T already
-					//report one of its own named failure codes (StatusFlag, oc_dic.h) --
-					//exact-matched, since those are hardcoded literal constants the solvers assign
-					//directly, not computed values that could drift. A solver can legitimately
-					//converge (hit none of its own failure branches) yet still report a low or
-					//even negative ZNCC for a genuinely poor match -- zncc>=0 is not a reliable
-					//"solver succeeded" test by itself, so checking against the specific known
-					//sentinel values instead of a threshold is what actually distinguishes "the
-					//correlation itself failed" from "it succeeded (however poorly) but
-					//propagation rejected it," which call for different tuning responses
+					//report one of its own named failure codes (isFailureStatus(), oc_dic.h) --
+					//this is what actually distinguishes "the correlation itself failed" from "it
+					//succeeded (however poorly) but propagation rejected it," which call for
+					//different tuning responses
 					neighbor.result.zncc = (float)STATUS_RELIABILITY_GUIDED_REJECTED;
 				}
 			}
