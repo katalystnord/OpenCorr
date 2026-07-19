@@ -74,15 +74,17 @@ namespace opencorr
 		std::vector<storage_t> frame_data = hc->get_frame(frame_id); //storage_t = float, already normalized to [0, 255]-ish range
 
 		Image2D image(w, h);
-		for (int r = 0; r < h; r++)
-		{
-			for (int c = 0; c < w; c++)
-			{
-				float value = frame_data[r * w + c];
-				value = value < 0.f ? 0.f : (value > 255.f ? 255.f : value);
-				image.cv_mat.at<uchar>(r, c) = (uchar)(value + 0.5f);
-			}
-		}
+		//non-owning view over frame_data's own buffer (valid for the lifetime of this
+		//call, which is all convertTo() needs) -- one vectorized OpenCV call instead of a
+		//per-pixel loop. convertTo()'s saturate_cast<uchar> rounds to nearest and clamps
+		//to [0, 255] internally, exactly matching the manual clamp-then-round this
+		//replaces. OPENCV_DATA_TYPE (hypercine.h) is defined alongside storage_t's own
+		//typedef to always name the matching OpenCV type (double/float/uint16_t storage
+		//select USE_DOUBLE_STORAGE/USE_FLOAT_STORAGE/USE_INT_STORAGE at build time --
+		//OpenCorr's own CMakeLists.txt sets USE_FLOAT_STORAGE), so this stays correct
+		//regardless of which one is actually configured.
+		cv::Mat frame_mat(h, w, OPENCV_DATA_TYPE, frame_data.data());
+		frame_mat.convertTo(image.cv_mat, CV_8U);
 		cv::cv2eigen(image.cv_mat, image.eg_mat);
 		image.file_path = hc->file_name() + "#" + std::to_string(frame_id);
 
