@@ -802,6 +802,13 @@ namespace opencorr
 		camera.clear();
 		fillIntrinsics(camera_matrix, dist_coeffs, camera.intrinsics);
 		camera.updateMatrices();
+		//every existing caller of Calibration in this codebase (Stereovision, EpipolarSearch,
+		//and every example that builds one) calls prepare() immediately after loading
+		//intrinsics/extrinsics, before the Calibration is used -- it populates the
+		//undistort() maps that Stereovision::reconstruct() indexes. Without this, a
+		//Calibration produced here and handed directly to Stereovision/EpipolarSearch would
+		//index an empty (0x0) map.
+		camera.prepare(image_size.height, image_size.width);
 
 		return (float)rms;
 	}
@@ -831,6 +838,7 @@ namespace opencorr
 		left_camera.clear();
 		fillIntrinsics(camera_matrix_l, dist_l, left_camera.intrinsics);
 		left_camera.updateMatrices(); //left camera stays at the identity/origin, right_extrinsics below is expressed relative to it
+		left_camera.prepare(image_size.height, image_size.width); //see calibrate()'s own comment on why this is required
 
 		right_camera.clear();
 		fillIntrinsics(camera_matrix_r, dist_r, right_camera.intrinsics);
@@ -844,6 +852,7 @@ namespace opencorr
 		right_extrinsics.ty = (float)T.at<double>(1);
 		right_extrinsics.tz = (float)T.at<double>(2);
 		right_camera.updateCalibration(right_camera.intrinsics, right_extrinsics);
+		right_camera.prepare(image_size.height, image_size.width);
 
 		//calibration quality check, following DICe::Calibration::calibrate() (DICe_Calibration.cpp):
 		//because the fundamental matrix implicitly encodes the full stereo geometry, the epipolar
@@ -854,21 +863,28 @@ namespace opencorr
 		epipolar_residuals.reserve(stereo_left_points.size());
 		for (size_t i = 0; i < stereo_left_points.size(); i++)
 		{
-			cv::Mat pts_l(stereo_left_points[i]);
-			cv::Mat pts_r(stereo_right_points[i]);
-			cv::undistortPoints(pts_l, pts_l, camera_matrix_l, dist_l, cv::Mat(), camera_matrix_l);
-			cv::undistortPoints(pts_r, pts_r, camera_matrix_r, dist_r, cv::Mat(), camera_matrix_r);
+			//undistort into NEW vectors rather than in place: cv::Mat's constructor from a
+			//std::vector<Point2f> wraps that vector's own buffer without copying (verified),
+			//so undistorting "in place" into the same cv::Mat used to view
+			//stereo_left_points[i]/stereo_right_points[i] would silently overwrite this
+			//class's own stored point queues -- fragile even where it happens to be
+			//numerically harmless, and it very nearly hid a real bug here: F is only valid in
+			//the undistorted domain, so the residual below must read the undistorted points,
+			//never the original distorted ones
+			std::vector<cv::Point2f> undist_l, undist_r;
+			cv::undistortPoints(stereo_left_points[i], undist_l, camera_matrix_l, dist_l, cv::Mat(), camera_matrix_l);
+			cv::undistortPoints(stereo_right_points[i], undist_r, camera_matrix_r, dist_r, cv::Mat(), camera_matrix_r);
 
 			std::vector<cv::Vec3f> lines_l, lines_r;
-			cv::computeCorrespondEpilines(pts_l, 1, F, lines_l);
-			cv::computeCorrespondEpilines(pts_r, 2, F, lines_r);
+			cv::computeCorrespondEpilines(undist_l, 1, F, lines_l);
+			cv::computeCorrespondEpilines(undist_r, 2, F, lines_r);
 
 			double pair_error = 0.0;
 			int npt = (int)stereo_left_points[i].size();
 			for (int j = 0; j < npt; j++)
 			{
-				double err = std::fabs(stereo_left_points[i][j].x * lines_r[j][0] + stereo_left_points[i][j].y * lines_r[j][1] + lines_r[j][2])
-					+ std::fabs(stereo_right_points[i][j].x * lines_l[j][0] + stereo_right_points[i][j].y * lines_l[j][1] + lines_l[j][2]);
+				double err = std::fabs(undist_l[j].x * lines_r[j][0] + undist_l[j].y * lines_r[j][1] + lines_r[j][2])
+					+ std::fabs(undist_r[j].x * lines_l[j][0] + undist_r[j].y * lines_l[j][1] + lines_l[j][2]);
 				pair_error += err;
 			}
 			epipolar_residuals.push_back((float)(pair_error / npt));

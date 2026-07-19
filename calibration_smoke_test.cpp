@@ -123,12 +123,22 @@ int main()
 		<< " cx=" << mono_camera.intrinsics.cx << " cy=" << mono_camera.intrinsics.cy << endl;
 	cout << "  ground truth fx=" << gt_fx << " fy=" << gt_fy << " cx=" << gt_cx << " cy=" << gt_cy << endl;
 
+	//calibrate() must leave the Calibration ready for Stereovision/EpipolarSearch to use
+	//directly (i.e. it must call prepare() itself) -- every other caller of Calibration in
+	//this codebase calls prepare() before use, and map_x/map_y (populated by prepare(),
+	//oc_calibration.h) staying empty is exactly the bug this fix corrects
+	bool mono_prepared = mono_camera.map_x.rows() == image_height && mono_camera.map_x.cols() == image_width;
+
 	bool mono_ok = mono_calibrator.imageCount() >= 8
 		&& mono_rms < 1.0f
 		&& fabs(mono_camera.intrinsics.fx - gt_fx) < 5.0
 		&& fabs(mono_camera.intrinsics.fy - gt_fy) < 5.0
 		&& fabs(mono_camera.intrinsics.cx - gt_cx) < 5.0
-		&& fabs(mono_camera.intrinsics.cy - gt_cy) < 5.0;
+		&& fabs(mono_camera.intrinsics.cy - gt_cy) < 5.0
+		&& mono_prepared;
+	cout << "  calibrate() left the Calibration prepare()'d (map_x is " << mono_camera.map_x.rows()
+		<< "x" << mono_camera.map_x.cols() << ", expected " << image_height << "x" << image_width << "): "
+		<< (mono_prepared ? "yes" : "no") << endl;
 	cout << "  " << (mono_ok ? "PASS" : "FAIL") << endl;
 	if (!mono_ok) failures++;
 
@@ -183,12 +193,17 @@ int main()
 	mean_epi /= stereo_calibrator.epipolarResiduals().size();
 	cout << "  mean epipolar residual: " << mean_epi << endl;
 
+	bool stereo_prepared = left_camera.map_x.rows() == image_height && left_camera.map_x.cols() == image_width
+		&& right_camera.map_x.rows() == image_height && right_camera.map_x.cols() == image_width;
+	cout << "  calibrateStereo() left both Calibrations prepare()'d: " << (stereo_prepared ? "yes" : "no") << endl;
+
 	bool stereo_ok = stereo_calibrator.pairCount() >= 8
 		&& stereo_rms < 1.0f
 		&& fabs(right_extrinsics.tx - 120.0) < 3.0
 		&& fabs(right_extrinsics.ty) < 3.0
 		&& fabs(right_extrinsics.tz) < 3.0
-		&& mean_epi < 0.5f;
+		&& mean_epi < 0.5f
+		&& stereo_prepared;
 	cout << "  " << (stereo_ok ? "PASS" : "FAIL") << endl;
 	if (!stereo_ok) failures++;
 
@@ -215,6 +230,61 @@ int main()
 	bool sensitivity_ok = bad_mean_epi > mean_epi * 5.f; //should be dramatically worse, not just noisier
 	cout << "  " << (sensitivity_ok ? "PASS" : "FAIL") << " (metric correctly distinguishes good from bad calibration)" << endl;
 	if (!sensitivity_ok) failures++;
+
+	//--- epipolar residual must be evaluated in the UNDISTORTED domain ---
+	//this doesn't exercise CameraCalibrator directly (the rest of this file's synthetic
+	//images use zero ground-truth distortion, by design -- see the file's own scope note),
+	//it isolates the exact principle epipolarResiduals() relies on: F only satisfies the
+	//epipolar constraint for undistorted points, so feeding it raw distorted points (the bug
+	//this fix corrects) should inflate the residual well above the undistorted case.
+	cout << endl << "=== Epipolar residual must use the undistorted domain, not raw distorted points ===" << endl;
+	cv::Mat cam_l = (cv::Mat_<double>(3, 3) << 900, 0, 320, 0, 900, 240, 0, 0, 1);
+	cv::Mat cam_r = cam_l.clone();
+	cv::Mat dist = (cv::Mat_<double>(1, 5) << -0.35, 0.15, 0, 0, 0); //real, non-negligible radial distortion
+	cv::Mat rvec_stub = cv::Mat::zeros(3, 1, CV_64F);
+	cv::Mat tvec_l_stub = cv::Mat::zeros(3, 1, CV_64F);
+	cv::Mat tvec_r_stub = (cv::Mat_<double>(3, 1) << 120.0, 0.0, 0.0);
+
+	vector<cv::Point3f> world_pts;
+	for (float x = -30.f; x <= 30.f; x += 10.f)
+		for (float y = -30.f; y <= 30.f; y += 10.f)
+			world_pts.push_back(cv::Point3f(x, y, 400.f)); //well in front of both cameras
+
+	vector<cv::Point2f> ideal_l, ideal_r, distorted_l, distorted_r;
+	cv::Mat dist_zero5 = cv::Mat::zeros(1, 5, CV_64F);
+	cv::projectPoints(world_pts, rvec_stub, tvec_l_stub, cam_l, dist_zero5, ideal_l);
+	cv::projectPoints(world_pts, rvec_stub, tvec_r_stub, cam_r, dist_zero5, ideal_r);
+	cv::projectPoints(world_pts, rvec_stub, tvec_l_stub, cam_l, dist, distorted_l);
+	cv::projectPoints(world_pts, rvec_stub, tvec_r_stub, cam_r, dist, distorted_r);
+
+	//F fit from the IDEAL (undistorted) correspondences -- exactly what cv::stereoCalibrate
+	//itself returns, since it always operates in the undistorted/normalized domain internally
+	cv::Mat F_synth = cv::findFundamentalMat(ideal_l, ideal_r, cv::FM_8POINT);
+
+	auto meanEpipolarResidual = [&](const vector<cv::Point2f>& pl, const vector<cv::Point2f>& pr) -> double
+	{
+		vector<cv::Vec3f> lines_l, lines_r;
+		cv::computeCorrespondEpilines(pl, 1, F_synth, lines_l);
+		cv::computeCorrespondEpilines(pr, 2, F_synth, lines_r);
+		double total = 0.0;
+		for (size_t j = 0; j < pl.size(); j++)
+		{
+			total += std::fabs(pl[j].x * lines_r[j][0] + pl[j].y * lines_r[j][1] + lines_r[j][2])
+				+ std::fabs(pr[j].x * lines_l[j][0] + pr[j].y * lines_l[j][1] + lines_l[j][2]);
+		}
+		return total / pl.size();
+	};
+
+	double residual_undistorted = meanEpipolarResidual(ideal_l, ideal_r);
+	double residual_distorted = meanEpipolarResidual(distorted_l, distorted_r);
+	cout << "  mean residual, undistorted points vs F: " << residual_undistorted << endl;
+	cout << "  mean residual, RAW DISTORTED points vs the same F: " << residual_distorted << endl;
+
+	bool undistort_domain_ok = residual_undistorted < 0.05 && residual_distorted > residual_undistorted * 20.0;
+	cout << "  " << (undistort_domain_ok ? "PASS" : "FAIL")
+		<< ": undistorted points satisfy F almost exactly, raw distorted points don't -- "
+		<< "confirms epipolarResiduals() must undistort before evaluating, matching the actual fix" << endl;
+	if (!undistort_domain_ok) failures++;
 
 	cout << endl << (failures == 0 ? "ALL CHECKS PASSED" : "SOME CHECKS FAILED") << " (" << failures << " failure(s))" << endl;
 
