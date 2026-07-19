@@ -182,7 +182,13 @@ int main() {
 		Point2D current_location(poi_queue[i].x, poi_queue[i].y);
 		Point2D current_offset(poi_queue[i].deformation.u, poi_queue[i].deformation.v);
 		view2_pt_queue[i] = current_location + current_offset;
-		if (isnan(poi_queue[i].result.zncc))
+		//zncc < 0 covers every solver failure sentinel (StatusFlag, oc_dic.h), not just NaN --
+		//isnan() alone is dead code here, since a solver that detects NaN internally already
+		//overwrites zncc with the -5 (STATUS_NAN_IN_RESULT) sentinel before returning, so the
+		//raw value is never actually NaN by the time it's read back here. Any of the other
+		//negative codes (e.g. -8 STATUS_HESSIAN_SINGULAR) previously slipped through this
+		//check and got treated as a successful match.
+		if (poi_queue[i].result.zncc < 0.f)
 		{
 			poi_result_queue[i].result.r2_x = 0;
 			poi_result_queue[i].result.r2_y = 0;
@@ -211,9 +217,15 @@ int main() {
 	stereo_reconstruction.prepare();
 	stereo_reconstruction.reconstruct(view1_pt_queue, view2_pt_queue, pt_3d_queue);
 
-	//store the 3D coordinates for output
+	//store the 3D coordinates for output -- only for POIs whose stereo match actually
+	//succeeded (r1r2_zncc >= 0, set above); a failed POI's view2_pt_queue location was never
+	//really solved, so its reconstructed 3D position would be meaningless. Leaves ref_coor at
+	//its already-zeroed default (POI2DS::clear()) instead, matching the convention already
+	//used for r2_x/r2_y above.
 #pragma omp parallel for
 	for (int i = 0; i < poi_queue.size(); i++) {
+		if (poi_result_queue[i].result.r1r2_zncc < 0.f) continue;
+
 		poi_result_queue[i].ref_coor.x = pt_3d_queue[i].x;
 		poi_result_queue[i].ref_coor.y = pt_3d_queue[i].y;
 		poi_result_queue[i].ref_coor.z = pt_3d_queue[i].z;

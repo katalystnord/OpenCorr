@@ -305,10 +305,21 @@ int main()
 	stereo_reconstruction.reconstruct(ref_view1_pt_queue, ref_view2_pt_queue, ref_pt_3d_queue);
 	stereo_reconstruction.reconstruct(tar_view1_pt_queue, tar_view2_pt_queue, tar_pt_3d_queue);
 
-	//calculate the 3D displacements of POIs
+	//calculate the 3D displacements of POIs -- only where all three matching stages stored
+	//above (stereo r1-r2, temporal r1-t1, stereo r1-t2) actually succeeded (zncc >= 0; a
+	//negative value is one of the solvers' own StatusFlag failure sentinels, oc_dic.h). A POI
+	//where any stage failed keeps its already-zeroed ref_coor/tar_coor/deformation instead of
+	//a 3D position/displacement derived from an unsolved 2D correspondence.
 #pragma omp parallel for
 	for (int i = 0; i < queue_length; i++)
 	{
+		if (poi_result_queue[i].result.r1r2_zncc < 0.f
+			|| poi_result_queue[i].result.r1t1_zncc < 0.f
+			|| poi_result_queue[i].result.r1t2_zncc < 0.f)
+		{
+			continue;
+		}
+
 		poi_result_queue[i].ref_coor = ref_pt_3d_queue[i];
 		poi_result_queue[i].tar_coor = tar_pt_3d_queue[i];
 		poi_result_queue[i].deformation.u = tar_pt_3d_queue[i].x - ref_pt_3d_queue[i].x;
