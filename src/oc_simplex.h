@@ -91,7 +91,7 @@ namespace opencorr
 		static void release(std::unique_ptr<SimplexMatch2D_>& instance);
 	};
 
-	class SimplexMatch2D : public DIC
+	class SimplexMatch2D : public DIC, public GradientPopulatingSolver2D
 	{
 	private:
 		std::unique_ptr<Interpolation2D> tar_interp;

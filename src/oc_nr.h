@@ -44,7 +44,7 @@ namespace opencorr
 		static void update(std::unique_ptr<NR2D1_>& instance, int subset_radius_x, int subset_radius_y);
 	};
 
-	class NR2D1 : public DIC
+	class NR2D1 : public DIC, public GradientPopulatingSolver2D
 	{
 	private:
 		std::unique_ptr<Gradient2D4> tar_gradient; //gradient for calculating Hessian matrix of reference subset

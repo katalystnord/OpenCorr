@@ -24,7 +24,7 @@ namespace
 	//correct gradient) only if the incoming Taylor-extrapolated guess is already close
 	//to truth, and otherwise reports a low ZNCC without moving from the guess -- a
 	//reasonable stand-in for "a bad initial guess doesn't converge."
-	class LinearFieldStubSolver : public DIC
+	class LinearFieldStubSolver : public DIC, public GradientPopulatingSolver2D
 	{
 	public:
 		void prepare() override {}
@@ -189,6 +189,35 @@ int main()
 		cout << "  " << (race_ok ? "PASS" : "FAIL")
 			<< ": a later, better neighbor (via B0->B) still solves C after A's earlier attempt failed" << endl;
 		if (!race_ok) failures++;
+	}
+
+	//--- regression: a translation-only solver (FFTCC2D, never populates deformation.
+	//ux/uy/vx/vy) must be rejected outright, not silently propagate stale/zero gradient
+	//across the whole flood-filled region (issue #17, Wave 2) ---
+	cout << endl << "=== Regression: a non-gradient-populating solver is rejected ===" << endl;
+	{
+		vector<POI2D> poi_fftcc(poi_number_x * poi_number_y, POI2D(Point2D(0.f, 0.f)));
+		int fftcc_seed_idx = 0;
+		poi_fftcc[fftcc_seed_idx] = POI2D(upper_left);
+		poi_fftcc[fftcc_seed_idx].result.zncc = 0.95f;
+
+		FFTCC2D fftcc_as_propagator(subset_radius, subset_radius, 1);
+		fftcc_as_propagator.setImages(ref_img, tar_img);
+
+		ReliabilityGuided2D rg_reject(poi_number_x, poi_number_y);
+		bool threw = false;
+		try
+		{
+			rg_reject.compute(poi_fftcc, { fftcc_seed_idx }, fftcc_as_propagator);
+		}
+		catch (std::string&)
+		{
+			threw = true;
+		}
+		cout << "  FFTCC2D passed as propagator, threw: " << threw << endl;
+		cout << "  " << (threw ? "PASS" : "FAIL")
+			<< ": FFTCC2D (translation-only) is rejected instead of silently propagating stale gradient" << endl;
+		if (!threw) failures++;
 	}
 
 	cout << endl << (failures == 0 ? "ALL CHECKS PASSED" : "SOME CHECKS FAILED") << " (" << failures << " failure(s))" << endl;

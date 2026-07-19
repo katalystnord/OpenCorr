@@ -36,7 +36,7 @@ namespace opencorr
 	//J. Yang et al, Optics and Lasers in Engineering (2020) 127: 105964.
 	//https://doi.org/10.1016/j.optlaseng.2019.105964
 
-	class FeatureAffine2D : public DIC
+	class FeatureAffine2D : public DIC, public GradientPopulatingSolver2D
 	{
 	private:
 		std::vector<std::unique_ptr<NearestNeighbor>> instance_pool;

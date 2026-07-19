@@ -51,7 +51,7 @@ namespace opencorr
 		static void update(std::unique_ptr<ICLM2D1_>& instance, int subset_radius_x, int subset_radius_y);
 	};
 
-	class ICLM2D1 : public DIC, public SplittablePrepare2D
+	class ICLM2D1 : public DIC, public SplittablePrepare2D, public GradientPopulatingSolver2D
 	{
 	private:
 		std::unique_ptr<Interpolation2D> tar_interp; //interpolation for generating target subset during iteration
@@ -99,7 +99,7 @@ namespace opencorr
 		static void update(std::unique_ptr<ICLM2D2_>& instance, int subset_radius_x, int subset_radius_y);
 	};
 
-	class ICLM2D2 : public DIC, public SplittablePrepare2D
+	class ICLM2D2 : public DIC, public SplittablePrepare2D, public GradientPopulatingSolver2D
 	{
 	private:
 		std::unique_ptr<Interpolation2D> tar_interp;

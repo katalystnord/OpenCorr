@@ -88,8 +88,10 @@ namespace opencorr
 		//prepare()'d ICGN2D1/ICGN2D2/ICLM2D1/2D2/SimplexMatch2D. The solver MUST populate
 		//deformation.ux/uy/vx/vy on success, not just u/v: the flood-fill's Taylor
 		//extrapolation reads a solved neighbor's own gradient to seed the NEXT hop, so a
-		//translation-only solver (FFTCC2D) silently propagates a stale or zero gradient
-		//across the whole filled region instead of erroring -- do not pass FFTCC2D here.
+		//translation-only solver (FFTCC2D) would otherwise silently propagate a stale or
+		//zero gradient across the whole filled region instead of erroring -- enforced at
+		//the type level via GradientPopulatingSolver2D (oc_dic.h): compute() below throws
+		//if solver doesn't implement it, rather than relying on this comment alone.
 		//
 		//Returns the number of POIs the flood-fill successfully reached and accepted
 		//(excluding the seeds).

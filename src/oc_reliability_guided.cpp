@@ -69,6 +69,18 @@ namespace opencorr
 				+ std::to_string(total) + ")");
 		}
 
+		//was a comment-only contract ("do not pass FFTCC2D here") -- now checked directly.
+		//The flood-fill's Taylor extrapolation (below) reads a solved neighbor's own
+		//deformation.ux/uy/vx/vy to seed the next hop's initial guess; a solver that never
+		//populates those (FFTCC2D, translation-only) would silently propagate stale/zero
+		//gradient across the whole filled region with no error at all
+		if (dynamic_cast<GradientPopulatingSolver2D*>(&solver) == nullptr)
+		{
+			throw std::string("ReliabilityGuided2D::compute(): solver must populate deformation.ux/uy/vx/vy "
+				"on success (implement GradientPopulatingSolver2D, oc_dic.h) -- a translation-only solver "
+				"like FFTCC2D cannot seed the flood-fill's Taylor extrapolation");
+		}
+
 		std::vector<bool> visited(total, false); //popped, or already queued -- never queued twice
 
 		std::priority_queue<RGQueueEntry, std::vector<RGQueueEntry>, RGQueueLess> queue;

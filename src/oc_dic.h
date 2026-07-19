@@ -92,6 +92,22 @@ namespace opencorr
 		virtual void prepareTar() = 0;
 	};
 
+	//Marker interface: a solver whose compute() populates deformation.ux/uy/vx/vy (not
+	//just u/v) on a successful solve -- i.e. is safe to pass as ReliabilityGuided2D's own
+	//propagation solver (oc_reliability_guided.h), whose flood-fill reads a solved
+	//neighbor's own gradient to Taylor-extrapolate the next hop's initial guess. A
+	//translation-only solver (FFTCC2D) would silently leave that neighbor's gradient at
+	//whatever stale/zero value it started with, propagating garbage across the whole
+	//filled region with no error -- this used to be a comment-only contract ("do not pass
+	//FFTCC2D here") that ReliabilityGuided2D::compute() could not itself check. Implemented
+	//by every 2D solver with an affine (or higher-order) local shape function: ICGN2D1/2D2,
+	//ICLM2D1/2D2, NR2D1, SimplexMatch2D, FeatureAffine2D. NOT implemented by FFTCC2D.
+	class GradientPopulatingSolver2D
+	{
+	public:
+		virtual ~GradientPopulatingSolver2D() = default;
+	};
+
 	class DIC
 	{
 	public:
