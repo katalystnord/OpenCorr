@@ -132,6 +132,26 @@ int main()
 	cout << "  " << (all_inside && poi_queue.size() == circle.getOwnedPixels().size() ? "PASS" : "FAIL") << endl;
 	if (!(all_inside && poi_queue.size() == circle.getOwnedPixels().size())) failures++;
 
+	//--- regression: a pre-closed ring (caller's own vertex array already repeats the first
+	//point at the end -- a common convention, e.g. GeoJSON-style rings or a GUI ROI tool that
+	//records the closing click back on the start point) must not turn contains() into an
+	//unconditional "everything is inside". The constructor always appends vertex_x[0]/
+	//vertex_y[0] itself to close the ring (see oc_shape.cpp), so a caller-supplied array that
+	//ALREADY ends where it started creates a zero-length final edge between the input's own
+	//last vertex and the constructor's freshly-appended closing vertex.
+	cout << endl << "=== Pre-closed ring (duplicated closing vertex) must not corrupt contains() ===" << endl;
+	vector<int> preclosed_x = { 10, 20, 20, 10, 10 }; //same square as above, closing point repeated
+	vector<int> preclosed_y = { 10, 10, 20, 20, 10 };
+	Polygon2D preclosed_square(preclosed_x, preclosed_y);
+
+	bool preclosed_ok = preclosed_square.contains(15, 15)     //center: inside
+		&& !preclosed_square.contains(1000, 1000)             //far outside: must NOT be swallowed
+		&& !preclosed_square.contains(-500, -500)             //far outside, other direction
+		&& !preclosed_square.contains(5, 15);                 //just outside, left of the square
+	cout << "  " << (preclosed_ok ? "PASS" : "FAIL")
+		<< ": a pre-closed ring's degenerate final edge doesn't make every pixel \"inside\"" << endl;
+	if (!preclosed_ok) failures++;
+
 	cout << endl << (failures == 0 ? "ALL CHECKS PASSED" : "SOME CHECKS FAILED") << " (" << failures << " failure(s))" << endl;
 	return failures == 0 ? 0 : 1;
 }

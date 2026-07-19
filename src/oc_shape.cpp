@@ -116,13 +116,17 @@ namespace opencorr
 		for (int i = 0; i < num_vertices; i++)
 		{
 			long long ex = vertex_x[i + 1] - vertex_x[i], ey = vertex_y[i + 1] - vertex_y[i];
+			long long len2 = ex * ex + ey * ey;
+			if (len2 == 0) continue; //degenerate (zero-length, e.g. a duplicated-consecutive
+				//vertex) edge carries no boundary information -- without this, cross and dot
+				//both collapse to 0 for EVERY query point, and 0>=0 && 0<=0 is unconditionally
+				//true, making contains() return true for any (x, y) whatsoever
 			long long px = x - vertex_x[i], py = y - vertex_y[i];
 			long long cross = ex * py - ey * px;
 			if (cross == 0)
 			{
 				//collinear with this edge's line -- inside iff also within the edge's span
 				long long dot = px * ex + py * ey;
-				long long len2 = ex * ex + ey * ey;
 				if (dot >= 0 && dot <= len2) return true;
 			}
 		}
