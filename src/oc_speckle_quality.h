@@ -130,7 +130,13 @@ namespace opencorr
 		//detected region too small to be a meaningful fraction of the image (guards against
 		//cv::normalize manufacturing full contrast out of pure sensor noise on a near-blank
 		//image)
-		std::unique_ptr<Polygon2D> detect(Image2D& image);
+		//
+		//Returns the Shape2D base, not the concrete Polygon2D this always actually
+		//constructs today, so that a future hole-aware detection (RegionWithHoles2D,
+		//oc_shape.h, issue #15 -- see this file's own class-level comment) can return a
+		//different concrete type without an API break for existing callers. Callers that
+		//need Polygon2D-specific members (e.g. numVertices()) should dynamic_cast.
+		std::unique_ptr<Shape2D> detect(Image2D& image);
 
 	private:
 		int window_radius;

@@ -112,13 +112,18 @@ int main()
 
 	cout << endl << "=== AutoROI segmentation ===" << endl;
 	AutoROI auto_roi(15);
-	std::unique_ptr<Polygon2D> detected = auto_roi.detect(image);
+	//detect() returns the Shape2D base (issue #17) since a future hole-aware detection
+	//could return a different concrete type -- today it always actually constructs a
+	//Polygon2D, so dynamic_cast back to it for numVertices()/rectangleIoU() below is safe
+	//and also doubles as a check that this test still matches what detect() actually returns
+	std::unique_ptr<Shape2D> detected = auto_roi.detect(image);
+	Polygon2D* detected_polygon = dynamic_cast<Polygon2D*>(detected.get());
 
 	bool roi_ok = false;
-	if (detected)
+	if (detected_polygon != nullptr)
 	{
-		float iou = rectangleIoU(*detected, rect_x, rect_y, rect_w, rect_h);
-		cout << "  detected polygon: " << detected->numVertices() << " vertices, bbox ["
+		float iou = rectangleIoU(*detected_polygon, rect_x, rect_y, rect_w, rect_h);
+		cout << "  detected polygon: " << detected_polygon->numVertices() << " vertices, bbox ["
 			<< detected->getMinX() << "," << detected->getMinY() << "] to ["
 			<< detected->getMaxX() << "," << detected->getMaxY() << "]" << endl;
 		cout << "  ground truth rect: [" << rect_x << "," << rect_y << "] to ["
@@ -136,14 +141,15 @@ int main()
 	cout << endl << "=== Sanity pass on real speckle photograph ===" << endl;
 	Image2D real_image("examples/2d_dic/oht_cfrp_0.bmp");
 	AutoROI real_roi(20);
-	std::unique_ptr<Polygon2D> real_detected = real_roi.detect(real_image);
+	std::unique_ptr<Shape2D> real_detected = real_roi.detect(real_image);
+	Polygon2D* real_detected_polygon = dynamic_cast<Polygon2D*>(real_detected.get());
 
 	bool real_ok = false;
-	if (real_detected)
+	if (real_detected_polygon != nullptr)
 	{
 		int area = (real_detected->getMaxX() - real_detected->getMinX()) * (real_detected->getMaxY() - real_detected->getMinY());
 		int image_area = real_image.width * real_image.height;
-		cout << "  detected polygon: " << real_detected->numVertices() << " vertices, bbox ["
+		cout << "  detected polygon: " << real_detected_polygon->numVertices() << " vertices, bbox ["
 			<< real_detected->getMinX() << "," << real_detected->getMinY() << "] to ["
 			<< real_detected->getMaxX() << "," << real_detected->getMaxY() << "]" << endl;
 		cout << "  bbox area / image area = " << (float)area / (float)image_area << endl;

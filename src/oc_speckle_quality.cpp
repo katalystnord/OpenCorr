@@ -195,7 +195,7 @@ namespace opencorr
 		}
 	}
 
-	std::unique_ptr<Polygon2D> AutoROI::detect(Image2D& image)
+	std::unique_ptr<Shape2D> AutoROI::detect(Image2D& image)
 	{
 		SpeckleQualityMap quality_map(window_radius);
 		quality_map.computeGradientMaps(image); //gradient-only path -- detect() never reads the SIFT-derived metrics, so skip that pass
