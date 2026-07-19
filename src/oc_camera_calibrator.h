@@ -117,8 +117,14 @@ namespace opencorr
 		int dot_origin_x = 0, dot_origin_y = 0;
 		int dot_origin_to_x_marker = 0, dot_origin_to_y_marker = 0;
 
-		cv::Size image_size;
-		bool image_size_set;
+		//tracked per detection context, not one shared size: addImage() (mono) and the
+		//left/right sides of addImagePair() (stereo) can each legitimately have their own
+		//resolution (a genuinely mismatched-resolution stereo rig is a real setup, e.g. a
+		//high-res color + lower-res IR pair) -- a single shared size previously rejected
+		//every image on whichever side didn't happen to match the very first image seen
+		//across ALL of them, mono or stereo, left or right
+		cv::Size mono_image_size, left_image_size, right_image_size;
+		bool mono_image_size_set = false, left_image_size_set = false, right_image_size_set = false;
 
 		//each image/pair keeps its own subset of object_points_template (grid_indices
 		//identify which template entries a detection's points correspond to) -- for
@@ -132,16 +138,18 @@ namespace opencorr
 
 		std::vector<float> epipolar_residuals;
 
-		bool detectCorners(const std::string& image_path, std::vector<cv::Point2f>& corners);
+		//size/size_set: the caller's own per-context size state (mono/left/right above),
+		//passed by reference so this can check/update whichever one applies
+		bool detectCorners(const std::string& image_path, std::vector<cv::Point2f>& corners, cv::Size& size, bool& size_set);
 
 		//detects a dot target; dots[k] is the image position of the grid point at
 		//flattened index grid_indices[k] (= row*board_width + col) in object_points_template,
 		//including the 3 donut marker dots at their known grid indices. Returns false
 		//(without throwing) if the target, or the 3 donut markers specifically, aren't found.
-		bool detectDots(const std::string& image_path, std::vector<cv::Point2f>& dots, std::vector<int>& grid_indices);
+		bool detectDots(const std::string& image_path, std::vector<cv::Point2f>& dots, std::vector<int>& grid_indices, cv::Size& size, bool& size_set);
 
-		//loads image_path (grayscale) and checks/sets image_size; shared by detectCorners/detectDots
-		bool loadAndCheckSize(const std::string& image_path, cv::Mat& img);
+		//loads image_path (grayscale) and checks/sets size; shared by detectCorners/detectDots
+		bool loadAndCheckSize(const std::string& image_path, cv::Mat& img, cv::Size& size, bool& size_set);
 
 		static void fillIntrinsics(const cv::Mat& camera_matrix, const cv::Mat& dist_coeffs, CameraIntrinsics& intrinsics);
 

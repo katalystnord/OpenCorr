@@ -286,6 +286,42 @@ int main()
 		<< "confirms epipolarResiduals() must undistort before evaluating, matching the actual fix" << endl;
 	if (!undistort_domain_ok) failures++;
 
+	//--- regression: a genuinely mismatched-resolution stereo rig must not have its
+	//right-camera images spuriously rejected as a "size mismatch" against the left
+	//camera's own resolution (image_size used to be a single value shared across both) ---
+	cout << endl << "=== Mismatched left/right resolutions must both be accepted ===" << endl;
+	{
+		CameraCalibrator mismatched_calibrator(board_width, board_height, square_size);
+		int right_width = 800, right_height = 600; //deliberately different from the left's 640x480
+
+		cv::Mat rvec_l = (cv::Mat_<double>(3, 1) << 0.1, 0.05, 0.0);
+		cv::Mat tvec_l = (cv::Mat_<double>(3, 1) << -board_width * square_size / 2, -board_height * square_size / 2, 600.0);
+		cv::Mat R_l;
+		cv::Rodrigues(rvec_l, R_l);
+		cv::Mat R_r = r_rel * R_l;
+		cv::Mat T_r = r_rel * tvec_l + t_rel;
+		cv::Mat rvec_r;
+		cv::Rodrigues(R_r, rvec_r);
+
+		//left camera's own intrinsics reused for the right image too -- this test is only
+		//about whether detection/size-tracking accepts the pair, not stereo parameter
+		//recovery, so a physically-accurate right-camera intrinsic matrix isn't needed
+		cv::Mat img_l = renderCheckerboard(board_width, board_height, square_size, gt_camera_matrix, rvec_l, tvec_l, image_width, image_height);
+		cv::Mat img_r = renderCheckerboard(board_width, board_height, square_size, gt_camera_matrix, rvec_r, T_r, right_width, right_height);
+
+		string path_l = "/tmp/oc_cal_mismatched_l.png";
+		string path_r = "/tmp/oc_cal_mismatched_r.png";
+		cv::imwrite(path_l, img_l);
+		cv::imwrite(path_r, img_r);
+
+		bool pair_added = mismatched_calibrator.addImagePair(path_l, path_r);
+		cout << "  left " << image_width << "x" << image_height << ", right " << right_width << "x" << right_height
+			<< " -- pair accepted: " << pair_added << endl;
+		cout << "  " << (pair_added ? "PASS" : "FAIL")
+			<< ": right camera's own (different) resolution isn't rejected against the left's" << endl;
+		if (!pair_added) failures++;
+	}
+
 	cout << endl << (failures == 0 ? "ALL CHECKS PASSED" : "SOME CHECKS FAILED") << " (" << failures << " failure(s))" << endl;
 
 	return failures == 0 ? 0 : 1;

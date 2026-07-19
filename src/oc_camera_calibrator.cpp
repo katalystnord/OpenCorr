@@ -264,7 +264,7 @@ namespace opencorr
 
 	CameraCalibrator::CameraCalibrator(int board_width, int board_height, float square_size)
 		: target_type(CalibrationTargetType::CHECKER_BOARD),
-		board_width(board_width), board_height(board_height), square_size(square_size), image_size_set(false)
+		board_width(board_width), board_height(board_height), square_size(square_size)
 	{
 		for (int r = 0; r < board_height; r++)
 		{
@@ -280,8 +280,7 @@ namespace opencorr
 		: target_type(CalibrationTargetType::DOT_TARGET),
 		board_width(num_fiducials_x), board_height(num_fiducials_y), square_size(dot_spacing),
 		dot_origin_x(origin_x), dot_origin_y(origin_y),
-		dot_origin_to_x_marker(num_fiducials_origin_to_x_marker), dot_origin_to_y_marker(num_fiducials_origin_to_y_marker),
-		image_size_set(false)
+		dot_origin_to_x_marker(num_fiducials_origin_to_x_marker), dot_origin_to_y_marker(num_fiducials_origin_to_y_marker)
 	{
 		for (int r = 0; r < board_height; r++)
 		{
@@ -294,7 +293,7 @@ namespace opencorr
 
 	CameraCalibrator::~CameraCalibrator() {}
 
-	bool CameraCalibrator::loadAndCheckSize(const std::string& image_path, cv::Mat& img)
+	bool CameraCalibrator::loadAndCheckSize(const std::string& image_path, cv::Mat& img, cv::Size& size, bool& size_set)
 	{
 		img = cv::imread(image_path, cv::IMREAD_GRAYSCALE);
 		if (img.empty())
@@ -303,12 +302,12 @@ namespace opencorr
 			return false;
 		}
 
-		if (!image_size_set)
+		if (!size_set)
 		{
-			image_size = img.size();
-			image_size_set = true;
+			size = img.size();
+			size_set = true;
 		}
-		else if (img.size() != image_size)
+		else if (img.size() != size)
 		{
 			std::cerr << "CameraCalibrator: image size mismatch, excluding: " << image_path << std::endl;
 			return false;
@@ -317,10 +316,10 @@ namespace opencorr
 		return true;
 	}
 
-	bool CameraCalibrator::detectCorners(const std::string& image_path, std::vector<cv::Point2f>& corners)
+	bool CameraCalibrator::detectCorners(const std::string& image_path, std::vector<cv::Point2f>& corners, cv::Size& size, bool& size_set)
 	{
 		cv::Mat img;
-		if (!loadAndCheckSize(image_path, img))
+		if (!loadAndCheckSize(image_path, img, size, size_set))
 		{
 			return false;
 		}
@@ -340,13 +339,13 @@ namespace opencorr
 		return true;
 	}
 
-	bool CameraCalibrator::detectDots(const std::string& image_path, std::vector<cv::Point2f>& dots_out, std::vector<int>& grid_indices_out)
+	bool CameraCalibrator::detectDots(const std::string& image_path, std::vector<cv::Point2f>& dots_out, std::vector<int>& grid_indices_out, cv::Size& size, bool& size_set)
 	{
 		dots_out.clear();
 		grid_indices_out.clear();
 
 		cv::Mat img;
-		if (!loadAndCheckSize(image_path, img))
+		if (!loadAndCheckSize(image_path, img, size, size_set))
 		{
 			return false;
 		}
@@ -442,7 +441,12 @@ namespace opencorr
 		//matches DICe's own get_dot_markers(img_cpy, dots, i_thresh, !invert, ...) call
 		cv::Ptr<cv::SimpleBlobDetector> general_detector = makeBlobDetector(min_blob_size);
 		std::vector<cv::KeyPoint> dots = findDotMarkers(img, dots_thresh, false, false, general_detector);
-		if ((int)dots.size() < (int)(num_grid * 0.7))
+		//integer arithmetic (dots.size()*10 < num_grid*7), not dots.size() < num_grid*0.7 --
+		//0.7 has no exact binary floating-point representation, so num_grid*0.7 truncates to
+		//one less than intended for many grid sizes (e.g. 25*0.7 computes as 17.499999...,
+		//truncating to 17 instead of the intended 18), silently accepting one fewer detected
+		//dot than the stated 70% floor actually requires
+		if (dots.size() * 10 < (size_t)num_grid * 7)
 		{
 			//the between-markers gray level didn't produce enough dots -- fall back to the
 			//threshold that worked for marker detection
@@ -509,7 +513,7 @@ namespace opencorr
 			{
 				return false;
 			}
-			if (boundary_check && (qx < 20.f || qx > image_size.width - 20.f))
+			if (boundary_check && (qx < 20.f || qx > size.width - 20.f))
 			{
 				return false;
 			}
@@ -629,7 +633,9 @@ namespace opencorr
 			grid_indices_out.push_back(gi);
 		}
 
-		if ((int)dots_out.size() < (int)(num_grid * 0.7))
+		//see the earlier general-pass check's own comment on why this is integer arithmetic,
+		//not dots_out.size() < num_grid*0.7
+		if (dots_out.size() * 10 < (size_t)num_grid * 7)
 		{
 			std::cerr << "CameraCalibrator: not enough dots found (" << dots_out.size() << "/" << num_grid
 				<< "), excluding: " << image_path << std::endl;
@@ -660,11 +666,11 @@ namespace opencorr
 
 		if (target_type == CalibrationTargetType::DOT_TARGET)
 		{
-			found = detectDots(image_path, points, grid_indices);
+			found = detectDots(image_path, points, grid_indices, mono_image_size, mono_image_size_set);
 		}
 		else
 		{
-			found = detectCorners(image_path, points);
+			found = detectCorners(image_path, points, mono_image_size, mono_image_size_set);
 			if (found)
 			{
 				grid_indices.resize(object_points_template.size());
@@ -695,13 +701,13 @@ namespace opencorr
 
 		if (target_type == CalibrationTargetType::DOT_TARGET)
 		{
-			left_found = detectDots(left_image_path, left_points, left_indices);
-			right_found = detectDots(right_image_path, right_points, right_indices);
+			left_found = detectDots(left_image_path, left_points, left_indices, left_image_size, left_image_size_set);
+			right_found = detectDots(right_image_path, right_points, right_indices, right_image_size, right_image_size_set);
 		}
 		else
 		{
-			left_found = detectCorners(left_image_path, left_points);
-			right_found = detectCorners(right_image_path, right_points);
+			left_found = detectCorners(left_image_path, left_points, left_image_size, left_image_size_set);
+			right_found = detectCorners(right_image_path, right_points, right_image_size, right_image_size_set);
 			if (left_found)
 			{
 				left_indices.resize(object_points_template.size());
@@ -746,7 +752,9 @@ namespace opencorr
 		//clear 70% while sharing very few common points (differing lighting/occlusion per
 		//camera), and cv::stereoCalibrate/cv::initCameraMatrix2D need enough points per view for
 		//a stable pose solve, not just a nonempty one
-		if ((int)common_indices.size() < (int)(object_points_template.size() * 0.7))
+		//integer arithmetic, not common_indices.size() < object_points_template.size()*0.7 --
+		//see the general dot-pass check's own comment (detectDots()) on why
+		if (common_indices.size() * 10 < object_points_template.size() * 7)
 		{
 			std::cerr << "CameraCalibrator: too few common points between left/right images (" << common_indices.size()
 				<< "/" << object_points_template.size() << "), excluding pair: "
@@ -810,7 +818,7 @@ namespace opencorr
 		cv::Mat camera_matrix, dist_coeffs;
 		std::vector<cv::Mat> rvecs, tvecs;
 
-		double rms = cv::calibrateCamera(object_points, mono_image_points, image_size,
+		double rms = cv::calibrateCamera(object_points, mono_image_points, mono_image_size,
 			camera_matrix, dist_coeffs, rvecs, tvecs);
 
 		camera.clear();
@@ -822,7 +830,7 @@ namespace opencorr
 		//undistort() maps that Stereovision::reconstruct() indexes. Without this, a
 		//Calibration produced here and handed directly to Stereovision/EpipolarSearch would
 		//index an empty (0x0) map.
-		camera.prepare(image_size.height, image_size.width);
+		camera.prepare(mono_image_size.height, mono_image_size.width);
 
 		return (float)rms;
 	}
@@ -841,18 +849,30 @@ namespace opencorr
 			object_points.push_back(objectPointsFor(indices));
 		}
 
-		cv::Mat camera_matrix_l = cv::initCameraMatrix2D(object_points, stereo_left_points, image_size, 0);
-		cv::Mat camera_matrix_r = cv::initCameraMatrix2D(object_points, stereo_right_points, image_size, 0);
+		cv::Mat camera_matrix_l = cv::initCameraMatrix2D(object_points, stereo_left_points, left_image_size, 0);
+		cv::Mat camera_matrix_r = cv::initCameraMatrix2D(object_points, stereo_right_points, right_image_size, 0);
 		cv::Mat dist_l, dist_r, R, T, E, F;
 
+		//cv::stereoCalibrate() itself only accepts one combined imageSize (an OpenCV API
+		//limitation, not something this wrapper can route around) -- left_image_size is used,
+		//matching the "world origin at the left camera" convention already used throughout
+		//this class. For a genuinely mismatched-resolution rig this is an approximation; each
+		//camera's own intrinsics (camera_matrix_l/r above, via initCameraMatrix2D) and its own
+		//prepare() call below still use that camera's own correct size.
+		if (left_image_size != right_image_size)
+		{
+			std::cerr << "CameraCalibrator: left/right image sizes differ (" << left_image_size << " vs "
+				<< right_image_size << "); cv::stereoCalibrate() only accepts one combined size, using left's" << std::endl;
+		}
+
 		double rms = cv::stereoCalibrate(object_points, stereo_left_points, stereo_right_points,
-			camera_matrix_l, dist_l, camera_matrix_r, dist_r, image_size, R, T, E, F,
+			camera_matrix_l, dist_l, camera_matrix_r, dist_r, left_image_size, R, T, E, F,
 			0, cv::TermCriteria(cv::TermCriteria::COUNT + cv::TermCriteria::EPS, 1000, 1e-7));
 
 		left_camera.clear();
 		fillIntrinsics(camera_matrix_l, dist_l, left_camera.intrinsics);
 		left_camera.updateMatrices(); //left camera stays at the identity/origin, right_extrinsics below is expressed relative to it
-		left_camera.prepare(image_size.height, image_size.width); //see calibrate()'s own comment on why this is required
+		left_camera.prepare(left_image_size.height, left_image_size.width); //see calibrate()'s own comment on why this is required
 
 		right_camera.clear();
 		fillIntrinsics(camera_matrix_r, dist_r, right_camera.intrinsics);
@@ -866,7 +886,7 @@ namespace opencorr
 		right_extrinsics.ty = (float)T.at<double>(1);
 		right_extrinsics.tz = (float)T.at<double>(2);
 		right_camera.updateCalibration(right_camera.intrinsics, right_extrinsics);
-		right_camera.prepare(image_size.height, image_size.width);
+		right_camera.prepare(right_image_size.height, right_image_size.width);
 
 		//calibration quality check, following DICe::Calibration::calibrate() (DICe_Calibration.cpp):
 		//because the fundamental matrix implicitly encodes the full stereo geometry, the epipolar
