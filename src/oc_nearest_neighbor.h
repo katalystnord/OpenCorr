@@ -102,6 +102,14 @@ namespace opencorr
 		NearestNeighbor();
 		~NearestNeighbor();
 
+		//deleted, not merely undeclared: an ordinary compiler-generated copy would
+		//silently alias tree (the shared_ptr<KdTreeData>) between two instances,
+		//bypassing the deliberate, visible shareTreeFrom() below -- every current
+		//caller already stores this class via unique_ptr or a non-moved stack
+		//local, so this closes the gap without affecting real usage
+		NearestNeighbor(const NearestNeighbor&) = delete;
+		NearestNeighbor& operator=(const NearestNeighbor&) = delete;
+
 		void assignPoints(std::vector<Point2D>& point_queue);
 		void assignPoints(std::vector<POI2D>& poi_queue);
 		void assignPoints(std::vector<Point3D>& point_queue);
