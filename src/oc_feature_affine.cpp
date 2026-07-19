@@ -30,14 +30,22 @@ namespace opencorr
 		template<> struct AffineDim<Point2D> { static const int value = 3; };
 		template<> struct AffineDim<Point3D> { static const int value = 4; };
 
-		inline void fillAffineRow(Eigen::MatrixXf& m, int row, const Point2D& p)
+		//templated on the matrix type (Derived), not fixed to Eigen::MatrixXf: ransacAffineFit
+		//below uses these with BOTH a fixed-size Eigen::Matrix<float, dim1, dim1> (the
+		//per-trial minimal-sample fit, run up to ransac_config.trial_number times per POI --
+		//~98,000 POIs on a full grid -- where a dynamic MatrixXf's per-trial heap allocation
+		//is a real, avoidable cost) and a dynamic Eigen::MatrixXf (the one-time final re-fit
+		//over the whole consensus set, whose size genuinely isn't known until RANSAC finishes)
+		template<typename Derived>
+		inline void fillAffineRow(Eigen::MatrixBase<Derived>& m, int row, const Point2D& p)
 		{
 			m(row, 0) = p.x;
 			m(row, 1) = p.y;
 			m(row, 2) = 1.f;
 		}
 
-		inline void fillAffineRow(Eigen::MatrixXf& m, int row, const Point3D& p)
+		template<typename Derived>
+		inline void fillAffineRow(Eigen::MatrixBase<Derived>& m, int row, const Point3D& p)
 		{
 			m(row, 0) = p.x;
 			m(row, 1) = p.y;
@@ -45,14 +53,16 @@ namespace opencorr
 			m(row, 3) = 1.f;
 		}
 
-		inline Point2D applyAffine(const Eigen::MatrixXf& affine, const Point2D& p)
+		template<typename Derived>
+		inline Point2D applyAffine(const Eigen::MatrixBase<Derived>& affine, const Point2D& p)
 		{
 			return Point2D(
 				p.x * affine(0, 0) + p.y * affine(1, 0) + affine(2, 0),
 				p.x * affine(0, 1) + p.y * affine(1, 1) + affine(2, 1));
 		}
 
-		inline Point3D applyAffine(const Eigen::MatrixXf& affine, const Point3D& p)
+		template<typename Derived>
+		inline Point3D applyAffine(const Eigen::MatrixBase<Derived>& affine, const Point3D& p)
 		{
 			return Point3D(
 				p.x * affine(0, 0) + p.y * affine(1, 0) + p.z * affine(2, 0) + affine(3, 0),
@@ -72,8 +82,19 @@ namespace opencorr
 			const RansacConfig& ransac_config, int neighbor_number_min, std::mt19937_64& gen64,
 			Eigen::MatrixXf& affine_matrix, int& trial_counter, int& max_set_size)
 		{
-			const int dim1 = AffineDim<PointT>::value;
+			constexpr int dim1 = AffineDim<PointT>::value;
 			int neighbor_num = (int)ref_candidates.size();
+
+			//the per-trial sample is a MINIMAL sample for the affine fit (a square,
+			//exactly-determined system, matching what the original pre-dedup FeatureAffine2D/
+			//3D each hardcoded as Matrix3f/Matrix4f) -- required for the fixed-size matrices
+			//below, which can't accommodate any other row count
+			if (ransac_config.sample_mumber != dim1)
+			{
+				throw std::string("ransacAffineFit(): sample_mumber must equal the minimal affine "
+					"sample size (" + std::to_string(dim1) + " for this point type), got "
+					+ std::to_string(ransac_config.sample_mumber));
+			}
 
 			std::vector<int> candidate_index(neighbor_num);
 			std::iota(candidate_index.begin(), candidate_index.end(), 0); //ascending order to start
@@ -87,15 +108,18 @@ namespace opencorr
 				//randomly select samples
 				std::shuffle(candidate_index.begin(), candidate_index.end(), gen64);
 
-				Eigen::MatrixXf ref_neighbors(ransac_config.sample_mumber, dim1);
-				Eigen::MatrixXf tar_neighbors(ransac_config.sample_mumber, dim1);
-				for (int j = 0; j < ransac_config.sample_mumber; j++)
+				//fixed-size, not a dynamic Eigen::MatrixXf: this runs up to
+				//ransac_config.trial_number times PER POI (~98,000 POIs on a full grid), and
+				//dim1 is a compile-time constant (3 for 2D, 4 for 3D) -- a dynamic matrix here
+				//would heap-allocate on every single trial for no reason
+				Eigen::Matrix<float, dim1, dim1> ref_neighbors, tar_neighbors;
+				for (int j = 0; j < dim1; j++)
 				{
 					fillAffineRow(ref_neighbors, j, ref_candidates[candidate_index[j]]);
 					fillAffineRow(tar_neighbors, j, tar_candidates[candidate_index[j]]);
 				}
 				//ref * affine = tar, thus affine is the permutation of affine matrix in the paper, where Ax=x'
-				Eigen::MatrixXf affine_trial = ref_neighbors.colPivHouseholderQr().solve(tar_neighbors);
+				Eigen::Matrix<float, dim1, dim1> affine_trial = ref_neighbors.colPivHouseholderQr().solve(tar_neighbors);
 
 				//consensus
 				std::vector<int> trial_set;
