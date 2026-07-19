@@ -20,6 +20,43 @@
 
 namespace opencorr
 {
+	namespace
+	{
+		//splits a CSV data line into floats, skipping blank fields -- shared by every
+		//load*() function below (loadPoint2D/3D, loadTable2D/3D, loadDeformationTable2D,
+		//loadTable2DS), previously six separate copies of the same tokenizing loop, one
+		//of which (loadPoint3D's own hand-rolled 3-field version) hadn't received the
+		//same npos-wraparound fix already applied to loadPoint2D: a missing delimiter on
+		//its second field fed a huge position2-position1 length into substr() (relying on
+		//substr() to clamp it, rather than failing cleanly). Using this shared, already-
+		//robust version everywhere closes that gap too, not just the duplication itself.
+		std::vector<float> tokenizeCsvLine(const std::string& data_line, const std::string& delimiter)
+		{
+			std::vector<float> key_buffer;
+			size_t position1 = 0, position2 = 0;
+			std::string variable;
+
+			do
+			{
+				position2 = data_line.find(delimiter, position1);
+				if (position2 == std::string::npos)
+				{
+					position2 = data_line.length();
+				}
+
+				variable = data_line.substr(position1, position2 - position1);
+				if (!variable.empty())
+				{
+					key_buffer.push_back(std::stof(variable));
+				}
+
+				position1 = position2 + delimiter.length();
+			} while (position2 < data_line.length() && position1 < data_line.length());
+
+			return key_buffer;
+		}
+	}
+
 	IO2D::IO2D() {}
 
 	IO2D::~IO2D() {}
@@ -75,43 +112,12 @@ namespace opencorr
 		std::string data_line;
 		getline(file_in, data_line);
 		std::vector<Point2D> point_queue;
-		size_t position1, position2;
-		std::string variable;
-		std::vector<float> key_buffer;
 		int point_number = 0;
 
 		while (getline(file_in, data_line))
 		{
 			point_number++;
-			position1 = 0;
-			position2 = 0;
-			std::vector<float>().swap(key_buffer);
-
-			position2 = data_line.find(delimiter, position1);
-			if (position2 == std::string::npos)
-			{
-				//no delimiter at all -- can't parse two fields from this line. Previously fell
-				//through anyway: position1 = npos + delimiter.length() wraps around (size_t
-				//arithmetic) to some other, not-necessarily-out-of-range value, so the second
-				//substr() below could silently misparse content from the wrong offset instead
-				//of failing cleanly.
-				std::cerr << "skipping malformed row (no delimiter found) at line: " << point_number << std::endl;
-				continue;
-			}
-
-			variable = data_line.substr(position1, position2 - position1);
-			if (!variable.empty())
-			{
-				key_buffer.push_back(std::stof(variable));
-			}
-
-			position1 = position2 + delimiter.length();
-			position2 = data_line.length();
-			variable = data_line.substr(position1, position2 - position1);
-			if (!variable.empty())
-			{
-				key_buffer.push_back(std::stof(variable));
-			}
+			std::vector<float> key_buffer = tokenizeCsvLine(data_line, delimiter);
 
 			if (key_buffer.size() < 2)
 			{
@@ -270,31 +276,10 @@ namespace opencorr
 		std::string data_line;
 		getline(file_in, data_line);
 		std::vector<POI2D> poi_queue;
-		size_t position1, position2;
-		std::string variable;
-		std::vector<float> key_buffer;
 
 		while (getline(file_in, data_line))
 		{
-			position1 = 0;
-			position2 = 0;
-			std::vector<float>().swap(key_buffer);
-			do
-			{
-				position2 = data_line.find(delimiter, position1);
-				if (position2 == std::string::npos)
-				{
-					position2 = data_line.length();
-				}
-
-				variable = data_line.substr(position1, position2 - position1);
-				if (!variable.empty())
-				{
-					key_buffer.push_back(std::stof(variable));
-				}
-
-				position1 = position2 + delimiter.length();
-			} while (position2 < data_line.length() && position1 < data_line.length());
+			std::vector<float> key_buffer = tokenizeCsvLine(data_line, delimiter);
 
 			//a blank line, a row with a missing/stray delimiter, or a truncated file previously
 			//indexed key_buffer[0]/[1]/etc. with no size check at all -- undefined behavior
@@ -484,31 +469,10 @@ namespace opencorr
 		std::string data_line;
 		getline(file_in, data_line);
 		std::vector<POI2D> poi_queue;
-		size_t position1, position2;
-		std::string variable;
-		std::vector<float> key_buffer;
 
 		while (getline(file_in, data_line))
 		{
-			position1 = 0;
-			position2 = 0;
-			std::vector<float>().swap(key_buffer);
-			do
-			{
-				position2 = data_line.find(delimiter, position1);
-				if (position2 == std::string::npos)
-				{
-					position2 = data_line.length();
-				}
-
-				variable = data_line.substr(position1, position2 - position1);
-				if (!variable.empty())
-				{
-					key_buffer.push_back(std::stof(variable));
-				}
-
-				position1 = position2 + delimiter.length();
-			} while (position2 < data_line.length() && position1 < data_line.length());
+			std::vector<float> key_buffer = tokenizeCsvLine(data_line, delimiter);
 
 			POI2D size_probe(0.f, 0.f);
 			size_t min_fields = 2 //x, y
@@ -677,31 +641,10 @@ namespace opencorr
 		std::string data_line;
 		getline(file_in, data_line);
 		std::vector<POI2DS> poi_queue;
-		size_t position1, position2;
-		std::string variable;
-		std::vector<float> key_buffer;
 
 		while (getline(file_in, data_line))
 		{
-			position1 = 0;
-			position2 = 0;
-			std::vector<float>().swap(key_buffer);
-			do
-			{
-				position2 = data_line.find(delimiter, position1);
-				if (position2 == std::string::npos)
-				{
-					position2 = data_line.length();
-				}
-
-				variable = data_line.substr(position1, position2 - position1);
-				if (!variable.empty())
-				{
-					key_buffer.push_back(std::stof(variable));
-				}
-
-				position1 = position2 + delimiter.length();
-			} while (position2 < data_line.length() && position1 < data_line.length());
+			std::vector<float> key_buffer = tokenizeCsvLine(data_line, delimiter);
 
 			POI2DS size_probe(0.f, 0.f);
 			size_t min_fields = 2
@@ -1024,63 +967,25 @@ namespace opencorr
 		std::string data_line;
 		getline(file_in, data_line);
 		std::vector<Point3D> point_queue;
-		size_t position1, position2;
-		std::string variable;
-		std::vector<float> key_buffer;
 		int point_number = 0;
 
 		while (getline(file_in, data_line))
 		{
 			point_number++;
-			position1 = 0;
-			position2 = 0;
-			std::vector<float>().swap(key_buffer);
+			std::vector<float> key_buffer = tokenizeCsvLine(data_line, delimiter);
 
-			//get x
-			position2 = data_line.find(delimiter, position1);
-			if (position2 == std::string::npos)
+			if (key_buffer.size() < 3)
 			{
-				std::cerr << "failed to read POI at line: " << point_number << std::endl;
+				std::cerr << "skipping malformed row (too few fields) at line: " << point_number << std::endl;
+				continue;
 			}
-			else
-			{
-				variable = data_line.substr(position1, position2 - position1);
-				if (!variable.empty())
-				{
-					key_buffer.push_back(std::stof(variable));
-				}
 
-				//get y
-				position1 = position2 + delimiter.length();
-				position2 = data_line.find(delimiter, position1);
-				variable = data_line.substr(position1, position2 - position1);
-				if (!variable.empty())
-				{
-					key_buffer.push_back(std::stof(variable));
-				}
+			float x = key_buffer[0];
+			float y = key_buffer[1];
+			float z = key_buffer[2];
+			Point3D current_point(x, y, z);
 
-				//get z
-				position1 = position2 + delimiter.length();
-				position2 = data_line.length();
-				variable = data_line.substr(position1, position2 - position1);
-				if (!variable.empty())
-				{
-					key_buffer.push_back(std::stof(variable));
-				}
-
-				if (key_buffer.size() < 3)
-				{
-					std::cerr << "skipping malformed row (too few fields) at line: " << point_number << std::endl;
-					continue;
-				}
-
-				float x = key_buffer[0];
-				float y = key_buffer[1];
-				float z = key_buffer[2];
-				Point3D current_point(x, y, z);
-
-				point_queue.push_back(current_point);
-			}
+			point_queue.push_back(current_point);
 		}
 		file_in.close();
 
@@ -1122,31 +1027,10 @@ namespace opencorr
 		std::string data_line;
 		getline(file_in, data_line);
 		std::vector<POI3D> poi_queue;
-		size_t position1, position2;
-		std::string variable;
-		std::vector<float> key_buffer;
 
 		while (getline(file_in, data_line))
 		{
-			position1 = 0;
-			position2 = 0;
-			std::vector<float>().swap(key_buffer);
-			do
-			{
-				position2 = data_line.find(delimiter, position1);
-				if (position2 == std::string::npos)
-				{
-					position2 = data_line.length();
-				}
-
-				variable = data_line.substr(position1, position2 - position1);
-				if (!variable.empty())
-				{
-					key_buffer.push_back(std::stof(variable));
-				}
-
-				position1 = position2 + delimiter.length();
-			} while (position2 < data_line.length() && position1 < data_line.length());
+			std::vector<float> key_buffer = tokenizeCsvLine(data_line, delimiter);
 
 			POI3D size_probe(0.f, 0.f, 0.f);
 			size_t min_fields = 3 //x, y, z

@@ -222,6 +222,88 @@ int main()
 	cout << (truncated_result.empty() ? "PASS" : "FAIL") << ": loadMatrixBin() on a truncated file returns an empty queue, not partially-garbage data" << endl;
 	if (!truncated_result.empty()) failures++;
 
+	// --- loadPoint2D/loadPoint3D/loadTable2DS/loadTable3D: previously untested by this
+	// file (only loadTable2D/loadDeformationTable2D had coverage) -- added alongside the
+	// oc_io.cpp CSV-tokenizer deduplication so all six load*() functions have a real
+	// round-trip check, not just the two that happened to be exercised before ---
+	vector<Point2D> point2d_queue = { Point2D(3.5f, -1.25f), Point2D(10.f, 20.f) };
+	IO2D io_point2d;
+	io_point2d.setDelimiter(",");
+	io_point2d.savePoint2D(point2d_queue, "/tmp/oc_io_point2d.csv");
+	vector<Point2D> point2d_loaded = io_point2d.loadPoint2D("/tmp/oc_io_point2d.csv");
+	bool point2d_ok = point2d_loaded.size() == 2
+		&& fabs(point2d_loaded[0].x - 3.5f) < 1e-4f && fabs(point2d_loaded[0].y - (-1.25f)) < 1e-4f
+		&& fabs(point2d_loaded[1].x - 10.f) < 1e-4f && fabs(point2d_loaded[1].y - 20.f) < 1e-4f;
+	cout << (point2d_ok ? "PASS" : "FAIL") << ": loadPoint2D() round-trips through savePoint2D()" << endl;
+	if (!point2d_ok) failures++;
+
+	vector<Point3D> point3d_queue = { Point3D(3.5f, -1.25f, 7.f), Point3D(10.f, 20.f, 30.f) };
+	IO3D io_point3d;
+	io_point3d.setDelimiter(",");
+	io_point3d.savePoint3D(point3d_queue, "/tmp/oc_io_point3d.csv");
+	vector<Point3D> point3d_loaded = io_point3d.loadPoint3D("/tmp/oc_io_point3d.csv");
+	//also exercises the fix to a latent bug loadPoint3D had before sharing the same
+	//tokenizer as the other five load*() functions: a missing delimiter on the y field
+	//fed substr() a huge (npos-derived) length with no explicit guard, relying on
+	//substr()'s own clamping rather than failing cleanly -- the shared tokenizer's
+	//position2==npos check (already used by loadTable2D etc.) closes that gap here too
+	bool point3d_ok = point3d_loaded.size() == 2
+		&& fabs(point3d_loaded[0].x - 3.5f) < 1e-4f && fabs(point3d_loaded[0].y - (-1.25f)) < 1e-4f && fabs(point3d_loaded[0].z - 7.f) < 1e-4f
+		&& fabs(point3d_loaded[1].x - 10.f) < 1e-4f && fabs(point3d_loaded[1].y - 20.f) < 1e-4f && fabs(point3d_loaded[1].z - 30.f) < 1e-4f;
+	cout << (point3d_ok ? "PASS" : "FAIL") << ": loadPoint3D() round-trips through savePoint3D()" << endl;
+	if (!point3d_ok) failures++;
+
+	//a row with only 2 fields (missing the delimiter before z) must be cleanly skipped,
+	//not misparsed via the position1/position2 wraparound the pre-fix hand-rolled parser
+	//was exposed to (see the comment on the round-trip check above)
+	ofstream point3d_malformed_file("/tmp/oc_io_point3d_malformed.csv");
+	point3d_malformed_file << "header" << endl;
+	point3d_malformed_file << "1.0,2.0" << endl; //only 2 of the required 3 fields
+	point3d_malformed_file << "4.0,5.0,6.0" << endl; //well-formed
+	point3d_malformed_file.close();
+	vector<Point3D> point3d_malformed_loaded = io_point3d.loadPoint3D("/tmp/oc_io_point3d_malformed.csv");
+	bool point3d_malformed_ok = point3d_malformed_loaded.size() == 1
+		&& fabs(point3d_malformed_loaded[0].x - 4.f) < 1e-4f
+		&& fabs(point3d_malformed_loaded[0].y - 5.f) < 1e-4f
+		&& fabs(point3d_malformed_loaded[0].z - 6.f) < 1e-4f;
+	cout << (point3d_malformed_ok ? "PASS" : "FAIL") << ": loadPoint3D() skips a 2-field row cleanly instead of misparsing it" << endl;
+	if (!point3d_malformed_ok) failures++;
+
+	POI2DS poi2ds(5.f, 6.f);
+	poi2ds.deformation.u = 1.1f; poi2ds.deformation.v = 2.2f; poi2ds.deformation.w = 3.3f;
+	poi2ds.result.r1r2_zncc = 0.91f; poi2ds.result.r1t1_zncc = 0.92f; poi2ds.result.r1t2_zncc = 0.93f;
+	poi2ds.strain.exx = 0.11f; poi2ds.strain.ezz = 0.33f;
+	poi2ds.subset_radius.x = 12.f; poi2ds.subset_radius.y = 12.f;
+	vector<POI2DS> poi2ds_queue = { poi2ds };
+	IO2D io_2ds;
+	io_2ds.setDelimiter(",");
+	io_2ds.setPath("/tmp/oc_io_table2ds.csv");
+	io_2ds.saveTable2DS(poi2ds_queue);
+	vector<POI2DS> poi2ds_loaded = io_2ds.loadTable2DS();
+	bool table2ds_ok = poi2ds_loaded.size() == 1
+		&& fabs(poi2ds_loaded[0].deformation.u - 1.1f) < 1e-4f && fabs(poi2ds_loaded[0].deformation.w - 3.3f) < 1e-4f
+		&& fabs(poi2ds_loaded[0].result.r1t2_zncc - 0.93f) < 1e-4f && fabs(poi2ds_loaded[0].strain.ezz - 0.33f) < 1e-4f;
+	cout << (table2ds_ok ? "PASS" : "FAIL") << ": loadTable2DS() round-trips through saveTable2DS()" << endl;
+	if (!table2ds_ok) failures++;
+
+	POI3D poi3d_table(7.f, 8.f, 9.f);
+	poi3d_table.deformation.u = 1.f; poi3d_table.deformation.wz = 4.4f;
+	poi3d_table.result.zncc = 0.95f;
+	poi3d_table.strain.eyz = 0.22f;
+	poi3d_table.subset_radius.x = 8.f; poi3d_table.subset_radius.y = 8.f; poi3d_table.subset_radius.z = 8.f;
+	vector<POI3D> poi3d_table_queue = { poi3d_table };
+	IO3D io_3dtable;
+	io_3dtable.setDelimiter(",");
+	io_3dtable.setPath("/tmp/oc_io_table3d.csv");
+	io_3dtable.saveTable3D(poi3d_table_queue);
+	vector<POI3D> poi3d_table_loaded = io_3dtable.loadTable3D();
+	bool table3d_ok = poi3d_table_loaded.size() == 1
+		&& fabs(poi3d_table_loaded[0].deformation.wz - 4.4f) < 1e-4f
+		&& fabs(poi3d_table_loaded[0].result.zncc - 0.95f) < 1e-4f
+		&& fabs(poi3d_table_loaded[0].strain.eyz - 0.22f) < 1e-4f;
+	cout << (table3d_ok ? "PASS" : "FAIL") << ": loadTable3D() round-trips through saveTable3D()" << endl;
+	if (!table3d_ok) failures++;
+
 	cout << endl << (failures == 0 ? "ALL CHECKS PASSED" : "SOME CHECKS FAILED") << " (" << failures << ")" << endl;
 	return failures == 0 ? 0 : 1;
 }
