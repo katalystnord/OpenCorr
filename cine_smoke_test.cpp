@@ -166,6 +166,93 @@ int main()
 		if (!truncation_ok) failures++;
 	}
 
+	//--- regressions for the second audit pass's three read_header() findings: a
+	//zero width/height (divide-by-zero computing bit_depth), an image_count of 0
+	//(out-of-bounds image_offsets_[0] read before the "must have at least two
+	//images" guard), and a 32-bit-overflowing size_image*image_count product
+	//(silently defeats the truncation sanity check). Reuses the same minimal
+	//84-byte synthetic .cine layout as the truncation regression above, built by
+	//a shared helper parameterized on the fields each case needs to vary.
+	cout << endl << "=== Regressions: crafted/corrupted cine headers must fail cleanly ===" << endl;
+	{
+		auto buildSyntheticCine = [](uint32_t image_count, uint32_t width, uint32_t height, uint32_t size_image)
+		{
+			std::vector<char> buf;
+			auto push16 = [&](uint16_t v) { buf.insert(buf.end(), (char*)&v, (char*)&v + 2); };
+			auto push32 = [&](uint32_t v) { buf.insert(buf.end(), (char*)&v, (char*)&v + 4); };
+			auto push64 = [&](uint64_t v) { buf.insert(buf.end(), (char*)&v, (char*)&v + 8); };
+
+			push16(0); push16(44); push16(0); push16(1);
+			push32(0); push32(2); push32(0);
+			push32(image_count);
+			push32(44);  //off_image_header
+			push32(84);  //off_setup -- 2 frame_rate bytes appended below live here
+			push32(86);  //off_image_offsets -- right after frame_rate
+			push64(0);   //trigger_time
+
+			push32(40);  //bitmap size
+			push32(width);
+			push32(height);
+			push16(1);   //planes
+			push16(8);   //bit_count
+			push32(0);   //compression
+			push32(size_image);
+			push32(0); push32(0); push32(0); push32(0);
+			push16(1000); //frame_rate, at off_setup=84 -- needed so cases that legitimately
+			              //reach this read (image_count=0) don't fail on an unrelated
+			              //truncation check instead of the guard actually under test
+			return buf;
+		};
+
+		auto tryConstruct = [](const std::vector<char>& buf, const string& path, string& what_message) -> bool
+		{
+			std::ofstream f(path, std::ios::binary);
+			f.write(buf.data(), (std::streamsize)buf.size());
+			f.close();
+			bool threw = false;
+			try { Cine2D c(path); }
+			catch (std::exception& e) { threw = true; what_message = e.what(); }
+			catch (...) { threw = true; what_message = "(non-std::exception)"; }
+			remove(path.c_str());
+			return threw;
+		};
+
+		//case 1: width=0 -- pre-fix, (size_image*8)/(width*height) divides by zero
+		{
+			auto buf = buildSyntheticCine(2, 0, 4, 16);
+			string what;
+			bool threw = tryConstruct(buf, "examples/cine/zero_width_smoke_test.cine", what);
+			cout << "  width=0: threw=" << threw << " what=\"" << what << "\"" << endl;
+			cout << "  " << (threw ? "PASS" : "FAIL") << ": zero width rejected instead of dividing by zero" << endl;
+			if (!threw) failures++;
+		}
+
+		//case 2: image_count=0 -- pre-fix, image_offsets_ is resized to 0 and
+		//image_offsets_[0] is read before the "must have at least two images"
+		//guard on the next line, an out-of-bounds vector access
+		{
+			auto buf = buildSyntheticCine(0, 4, 4, 16);
+			string what;
+			bool threw = tryConstruct(buf, "examples/cine/zero_count_smoke_test.cine", what);
+			cout << "  image_count=0: threw=" << threw << " what=\"" << what << "\"" << endl;
+			cout << "  " << (threw ? "PASS" : "FAIL") << ": zero image_count rejected instead of an out-of-bounds read" << endl;
+			if (!threw) failures++;
+		}
+
+		//case 3: size_image chosen so size_image*image_count overflows 32 bits and
+		//wraps to a value <= the real (tiny) file size, defeating the truncation
+		//check in 32-bit arithmetic even though the declared frame size/count
+		//vastly exceeds what the file actually contains
+		{
+			auto buf = buildSyntheticCine(2, 4, 4, 0x80000000u); //size_image=2^31, image_count=2 -> product=2^32 wraps to 0 in 32-bit unsigned
+			string what;
+			bool threw = tryConstruct(buf, "examples/cine/overflow_smoke_test.cine", what);
+			cout << "  size_image*image_count overflow: threw=" << threw << " what=\"" << what << "\"" << endl;
+			cout << "  " << (threw ? "PASS" : "FAIL") << ": overflowing declared size rejected instead of silently passing the truncation check" << endl;
+			if (!threw) failures++;
+		}
+	}
+
 	cout << endl << (failures == 0 ? "ALL CHECKS PASSED" : "SOME CHECKS FAILED") << " (" << failures << " failure(s))" << endl;
 
 	return failures == 0 ? 0 : 1;

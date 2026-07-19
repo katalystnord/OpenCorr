@@ -553,7 +553,8 @@ HyperCine::read_header(const char * file_name){
   DEBUG_MSG("HyperCine::read_header(): bitmap compression:      " << bitmap_header_.compression);
   cine_file.read(reinterpret_cast<char*>(&bitmap_header_.size_image), sizeof(bitmap_header_.size_image));
   DEBUG_MSG("HyperCine::read_header(): bitmap image size:       " << bitmap_header_.size_image);
-  ASSERT_OR_EXCEPTION(bitmap_header_.size_image*header_.image_count <= file_size);
+  ASSERT_OR_EXCEPTION((int64_t)bitmap_header_.size_image*(int64_t)header_.image_count <= file_size);
+  ASSERT_OR_EXCEPTION(bitmap_header_.width!=0 && bitmap_header_.height!=0);
   int bit_depth = (bitmap_header_.size_image * 8) / (bitmap_header_.width * bitmap_header_.height);
   DEBUG_MSG("HyperCine::read_header(): bitmap actual bit count: " << bit_depth);
   cine_file.read(reinterpret_cast<char*>(&bitmap_header_.x_pixels_per_meter), sizeof(bitmap_header_.x_pixels_per_meter));
@@ -628,9 +629,9 @@ HyperCine::read_header(const char * file_name){
   cine_file.close();
 
   // compute the offset to the end of the cine file header
-  const int64_t begin = image_offsets_[0];
   if(header_.image_count<=1)
     throw std::invalid_argument("Error, cine must have at least two images");
+  const int64_t begin = image_offsets_[0];
   const int64_t end = image_offsets_[1];
   long long int total_storage_for_one_frame = end - begin;
   if(total_storage_for_one_frame<=0)
