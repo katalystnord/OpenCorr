@@ -97,6 +97,41 @@ namespace
 			for (auto& poi : poi_queue) compute(&poi);
 		}
 	};
+
+	//per-CALL (not just per-POI) controllable ZNCC and displacement increment, plus
+	//records the (x, y) position each POI is actually solved from on every call -- used
+	//below to directly observe whether a POI that fails on the exact frame a reference
+	//update triggers is handed the correctly re-anchored position on the NEXT frame, or a
+	//stale one still expressed in the old reference's coordinates
+	class RecordingControlledStubSolver : public DIC
+	{
+	public:
+		int call_count = 0;
+		std::vector<std::vector<float>> per_call_zncc;         //per_call_zncc[call][poi_index]
+		std::vector<std::vector<float>> per_call_u_increment;  //per_call_u_increment[call][poi_index]
+		std::vector<std::vector<Point2D>> recorded_positions;  //recorded_positions[call][poi_index]
+
+		void prepare() override {}
+		void compute(POI2D* poi) override { (void)poi; }
+
+		void compute(std::vector<POI2D>& poi_queue) override
+		{
+			std::vector<Point2D> positions;
+			positions.reserve(poi_queue.size());
+			for (size_t i = 0; i < poi_queue.size(); i++)
+			{
+				positions.push_back(Point2D(poi_queue[i].x, poi_queue[i].y));
+				float u_inc = (call_count < (int)per_call_u_increment.size() && i < per_call_u_increment[call_count].size())
+					? per_call_u_increment[call_count][i] : 0.f;
+				float zncc = (call_count < (int)per_call_zncc.size() && i < per_call_zncc[call_count].size())
+					? per_call_zncc[call_count][i] : 0.9f;
+				poi_queue[i].deformation.u += u_inc;
+				poi_queue[i].result.zncc = zncc;
+			}
+			recorded_positions.push_back(positions);
+			call_count++;
+		}
+	};
 }
 
 int main()
@@ -280,6 +315,46 @@ int main()
 		cout << "  " << (fixed_ref_ok ? "PASS" : "FAIL")
 			<< ": only frame 1 gets a full prepare(); frames 2-3 get prepareTar() only" << endl;
 		if (!fixed_ref_ok) failures++;
+	}
+
+	//--- regression: a POI that fails on the EXACT frame a reference update triggers must
+	//still be re-anchored (using its last known-good increment) so its ref_x/ref_y stays
+	//expressed in the NEW reference's coordinates -- not left describing a position in the
+	//OLD reference image, which is no longer the reference at all once ref_idx moves on ---
+	cout << endl << "=== Regression: reference-update coordinate mismatch for a POI that fails on the update frame ===" << endl;
+	{
+		vector<Image2D> four_frames = { images[0], images[1], images[2], images[3] };
+		vector<POI2D> poi_pair = { POI2D(Point2D(100.f, 100.f)), POI2D(Point2D(200.f, 100.f)) };
+
+		RecordingControlledStubSolver stub_solver;
+		//frame k=1: both succeed (POI A +5, POI B +3) -- establishes a real last_increment for both
+		//frame k=2: POI A fails outright; POI B succeeds (+2) -- triggers a reference update
+		//(n=2, percentile index 0 selects the WORSE of the two, i.e. POI A's failure sentinel)
+		//frame k=3: no controlled behavior needed -- only used to observe the position handed in
+		stub_solver.per_call_u_increment = { {5.f, 3.f}, {0.f, 2.f} };
+		stub_solver.per_call_zncc = { {0.95f, 0.95f}, {(float)STATUS_MAX_ITERATIONS_REACHED, 0.95f} };
+
+		SequenceTracker2D tracker;
+		tracker.setReferenceUpdateEnabled(true);
+		tracker.setUpdateZnccThreshold(0.9f);
+		tracker.setUpdatePercentile(0.75f);
+		auto status = tracker.compute(four_frames, poi_pair, stub_solver);
+
+		bool update_triggered = status[1].reference_updated;
+		//POI A: initial x=100, last successfully measured increment (frame k=1) was +5 --
+		//never updated since (it failed on k=2), so the fix must bank exactly that value:
+		//100 + 5 = 105. Pre-fix, this POI's ref_x was left at 100 (the OLD reference's
+		//coordinate), even though ref_idx had already moved to the frame k=2 image.
+		float poi_a_position_frame3 = stub_solver.recorded_positions[2][0].x;
+		bool position_ok = fabs(poi_a_position_frame3 - 105.f) < 1e-4f;
+
+		cout << "  reference updated on frame 2: " << update_triggered << endl;
+		cout << "  POI A's position handed to the solver on frame 3: " << poi_a_position_frame3
+			<< " (expected 105 = 100 + its last successful increment of 5)" << endl;
+		cout << "  " << ((update_triggered && position_ok) ? "PASS" : "FAIL")
+			<< ": a POI that fails on the exact reference-update frame is still re-anchored "
+			<< "using its last known displacement, not left in the old reference's stale coordinates" << endl;
+		if (!(update_triggered && position_ok)) failures++;
 	}
 
 	cout << endl << (failures == 0 ? "ALL CHECKS PASSED" : "SOME CHECKS FAILED") << " (" << failures << " failure(s))" << endl;

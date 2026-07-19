@@ -122,11 +122,6 @@ namespace opencorr
 			status.reference_updated = false;
 			status.jump_rejected_count = 0;
 
-			//tracked per-POI (not just via the aggregate jump_rejected_count) because the
-			//reference-update step below must not bank a stale last_increment for a POI that
-			//didn't actually produce a valid one this frame -- see that block for why
-			std::vector<bool> succeeded_this_frame(n, false);
-
 			for (int i = 0; i < n; i++)
 			{
 				if (working[i].result.zncc < 0.f)
@@ -170,7 +165,6 @@ namespace opencorr
 				poi_queue[i].deformation.u = cumulative_u[i] + last_increment_u[i];
 				poi_queue[i].deformation.v = cumulative_v[i] + last_increment_v[i];
 				poi_queue[i].result = working[i].result;
-				succeeded_this_frame[i] = true;
 			}
 
 			//reference-update decision: a percentile of the WHOLE field's ZNCC, not a single
@@ -202,20 +196,31 @@ namespace opencorr
 					{
 						for (int i = 0; i < n; i++)
 						{
-							//only bank a POI's displacement into the new reference if it
-							//actually produced a valid one THIS frame. Skipping this check
-							//used to bank whatever last_increment_u/v happened to be left over
-							//from an earlier successful frame for POIs that failed or were
-							//jump-rejected this frame -- silently re-anchoring them to a wrong
-							//position with no indication anything went wrong. A POI skipped
-							//here simply keeps its last known-good ref_x/ref_y/cumulative
-							//unchanged (an honest "assume no further motion since last
-							//verified" fallback, not a wrong nonzero one) and its result.zncc
-							//already reflects this frame's actual failure (see above), so the
-							//caller can tell it needs reseeding rather than silently trusting
-							//a corrupted position.
-							if (!succeeded_this_frame[i]) continue;
-
+							//applied to EVERY POI unconditionally, including one that failed or
+							//was jump-rejected on this exact frame k -- ref_idx is about to move
+							//to k for the WHOLE field below, and ref_x[i]/ref_y[i] must always
+							//represent this POI's position in images[ref_idx] for the next
+							//frame's solve to query the correct image at all. last_increment_u/v
+							//already holds this POI's best available displacement estimate
+							//relative to the OLD reference: either this frame's own fresh
+							//measurement (if it succeeded), or -- if it didn't -- whatever was
+							//last recorded the previous time it DID succeed (unchanged since,
+							//because the failure/jump-reject branches above both leave
+							//last_increment untouched). Banking that value is an honest "assume
+							//no further motion since last verified" approximation (0.f, a no-op,
+							//if this POI has never once succeeded), and is always more correct
+							//than the alternative of leaving ref_x/ref_y at the OLD reference's
+							//coordinates while ref_idx moves on regardless -- that would leave
+							//them describing a position in an image that is no longer the
+							//reference at all, not merely a stale-but-consistent estimate.
+							//A previous version of this fix skipped this update for a POI that
+							//didn't succeed THIS frame specifically, reasoning that banking a
+							//stale value was itself the bug -- but leaving the coordinates
+							//entirely uncorrected against the new reference is the same
+							//approximation made worse, not avoided. The caller-visible
+							//poi_queue[i].result above already reflects this frame's real
+							//failure/rejection either way, independent of this internal
+							//re-anchoring step.
 							ref_x[i] += last_increment_u[i];
 							ref_y[i] += last_increment_v[i];
 							cumulative_u[i] += last_increment_u[i];
