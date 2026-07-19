@@ -222,6 +222,25 @@ int main()
 	cout << (truncated_result.empty() ? "PASS" : "FAIL") << ": loadMatrixBin() on a truncated file returns an empty queue, not partially-garbage data" << endl;
 	if (!truncated_result.empty()) failures++;
 
+	//a header declaring an absurdly large (but positive, so it passes the existing
+	//head_info[0]<0 check) queue_length, with no data payload backing it, must be
+	//rejected up front against the file's own remaining size -- not attempted as a
+	//multi-GB std::vector<float> allocation, and not silently overflowing
+	//result_length*queue_length in 32-bit int arithmetic first
+	{
+		int32_t bogus_head[4] = { 300000000, 10, 10, 10 }; //300M POIs * 8 floats * 4 bytes ~= 9.6GB
+		ofstream bogus("/tmp/oc_io_matrix_bogus_length.bin", ios::binary);
+		bogus.write((char*)bogus_head, sizeof(bogus_head));
+		bogus.close();
+
+		IO3D io3d_bogus;
+		io3d_bogus.setPath("/tmp/oc_io_matrix_bogus_length.bin");
+		vector<POI3D> bogus_result = io3d_bogus.loadMatrixBin();
+		cout << (bogus_result.empty() ? "PASS" : "FAIL")
+			<< ": loadMatrixBin() on a header claiming a huge queue_length with no backing data returns empty, not a multi-GB allocation attempt" << endl;
+		if (!bogus_result.empty()) failures++;
+	}
+
 	// --- loadPoint2D/loadPoint3D/loadTable2DS/loadTable3D: previously untested by this
 	// file (only loadTable2D/loadDeformationTable2D had coverage) -- added alongside the
 	// oc_io.cpp CSV-tokenizer deduplication so all six load*() functions have a real

@@ -1432,7 +1432,25 @@ namespace opencorr
 		setDimZ(head_info[3]);
 
 		int result_length = 8;
-		int data_length = result_length * queue_length;
+
+		//bound the declared queue_length against what the file could actually still hold,
+		//computed in 64-bit arithmetic -- result_length*queue_length as plain int can
+		//overflow for a large positive (corrupted/garbage) head_info[0], and even short of
+		//overflow, a std::vector<float> sized from an untrusted value can attempt a multi-GB
+		//allocation before the later gcount() truncation check ever gets a chance to run
+		std::streampos data_start = file_in.tellg();
+		file_in.seekg(0, std::ios::end);
+		int64_t remaining_bytes = (int64_t)file_in.tellg() - (int64_t)data_start;
+		file_in.seekg(data_start);
+
+		int64_t data_length_64 = (int64_t)result_length * (int64_t)queue_length;
+		if (data_length_64 * (int64_t)sizeof(float) > remaining_bytes)
+		{
+			std::cerr << "file " << file_path << " is too short for its own declared queue_length" << std::endl;
+			return poi_queue;
+		}
+
+		int data_length = (int)data_length_64;
 		std::vector<float> data_array(data_length);
 		file_in.read((char*)data_array.data(), sizeof(float) * data_length);
 		if ((size_t)file_in.gcount() != sizeof(float) * data_length)
