@@ -19,6 +19,7 @@
  */
 
 #include <cmath>
+#include <limits>
 #include <omp.h>
 
 #include "oc_uncertainty.h"
@@ -172,11 +173,30 @@ namespace opencorr
 				local_coor.y = r - subset_ry;
 				warped_coor = deformation.warp(local_coor);
 				global_coor = instance->tar_subset->center + warped_coor;
-				instance->tar_subset->eg_mat(r, c) = tar_interp->compute(global_coor);
+				float sample = tar_interp->compute(global_coor);
+				//same exposure SimplexMatch2D::znssd() already guards against (oc_simplex.cpp):
+				//a tiny perturbation probe around a POI solved close enough to the image
+				//boundary can still push part of the warped subset out of bounds, sampling
+				//BicubicBspline's -1.f sentinel as if it were a real (never-negative) pixel
+				//intensity -- NaN signals "this probe direction can't be evaluated" to the
+				//caller, which must abstain (undefined = true) rather than silently computing
+				//a slope from fabricated data
+				if (sample == BicubicBspline::OUT_OF_BOUNDS)
+				{
+					return std::numeric_limits<float>::quiet_NaN();
+				}
+				instance->tar_subset->eg_mat(r, c) = sample;
 			}
 		}
 
 		float tar_mean_norm = instance->tar_subset->zeroMeanNorm();
+		if (tar_mean_norm <= 0.f)
+		{
+			//degenerate warped subset (e.g. entirely uniform after warping) -- same "can't
+			//evaluate this probe direction" signal as the out-of-bounds case above
+			return std::numeric_limits<float>::quiet_NaN();
+		}
+
 		Eigen::MatrixXf error_img = instance->tar_subset->eg_mat * (ref_mean_norm / tar_mean_norm) - instance->ref_subset->eg_mat;
 
 		return error_img.squaredNorm() / (ref_mean_norm * ref_mean_norm);
@@ -195,9 +215,12 @@ namespace opencorr
 		{
 			//not computed -- explicit sentinels rather than leaving whatever POI2D::clear()
 			//zero-initialized, or (if this POI2D is being reused across a sequence) a stale
-			//value from a previously-successful compute() call on the same object
+			//value from a previously-successful compute() call on the same object. beta uses
+			//-1.f, not 0.f: beta is smaller-is-better (a reciprocal slope), so 0.f would
+			//misleadingly read as "extremely well-conditioned" instead of "not computed" --
+			//the same reasoning already applied to the "undefined" bail-out further below
 			poi->result.sigma = -1.f;
-			poi->result.beta = 0.f;
+			poi->result.beta = -1.f;
 			return;
 		}
 
@@ -233,8 +256,9 @@ namespace opencorr
 		{
 			//degenerate (near-uniform-intensity) subset: same condition sigma already
 			//flags via min_grad_energy above -- znssd() divides by ref_mean_norm and its
-			//square, so proceeding here would silently produce NaN/Inf instead of a sentinel
-			poi->result.beta = 0.f;
+			//square, so proceeding here would silently produce NaN/Inf instead of a sentinel.
+			//-1.f, not 0.f, for the same reason as the early return above.
+			poi->result.beta = -1.f;
 			return;
 		}
 
@@ -246,6 +270,13 @@ namespace opencorr
 			poi->deformation.v, poi->deformation.vx, poi->deformation.vy);
 
 		float gamma_0 = znssd(instance.get(), poi, ref_mean_norm, converged, subset_rx, subset_ry);
+		if (std::isnan(gamma_0))
+		{
+			//the already-converged POI's own subset is out of bounds or degenerate -- can't
+			//probe around it at all (see znssd()'s own comment on the NaN convention)
+			poi->result.beta = -1.f;
+			return;
+		}
 
 		//the rotation probe perturbs uy/vx (a spatial gradient term), which induces a
 		//displacement at the subset boundary of ~radius*rotation_step -- scaling it down by
@@ -266,7 +297,8 @@ namespace opencorr
 			minus.setDeformation(converged.u - perturbation, converged.ux, converged.uy, converged.v, converged.vx, converged.vy);
 			float gamma_p = znssd(instance.get(), poi, ref_mean_norm, plus, subset_rx, subset_ry);
 			float gamma_m = znssd(instance.get(), poi, ref_mean_norm, minus, subset_rx, subset_ry);
-			if (std::fabs(gamma_p - gamma_0) < abort_threshold || std::fabs(gamma_m - gamma_0) < abort_threshold)
+			if (std::isnan(gamma_p) || std::isnan(gamma_m)
+				|| std::fabs(gamma_p - gamma_0) < abort_threshold || std::fabs(gamma_m - gamma_0) < abort_threshold)
 			{
 				undefined = true;
 			}
@@ -283,7 +315,8 @@ namespace opencorr
 			minus.setDeformation(converged.u, converged.ux, converged.uy, converged.v - perturbation, converged.vx, converged.vy);
 			float gamma_p = znssd(instance.get(), poi, ref_mean_norm, plus, subset_rx, subset_ry);
 			float gamma_m = znssd(instance.get(), poi, ref_mean_norm, minus, subset_rx, subset_ry);
-			if (std::fabs(gamma_p - gamma_0) < abort_threshold || std::fabs(gamma_m - gamma_0) < abort_threshold)
+			if (std::isnan(gamma_p) || std::isnan(gamma_m)
+				|| std::fabs(gamma_p - gamma_0) < abort_threshold || std::fabs(gamma_m - gamma_0) < abort_threshold)
 			{
 				undefined = true;
 			}
@@ -302,7 +335,8 @@ namespace opencorr
 			minus.setDeformation(converged.u, converged.ux, converged.uy + rotation_step, converged.v, converged.vx - rotation_step, converged.vy);
 			float gamma_p = znssd(instance.get(), poi, ref_mean_norm, plus, subset_rx, subset_ry);
 			float gamma_m = znssd(instance.get(), poi, ref_mean_norm, minus, subset_rx, subset_ry);
-			if (std::fabs(gamma_p - gamma_0) < abort_threshold || std::fabs(gamma_m - gamma_0) < abort_threshold)
+			if (std::isnan(gamma_p) || std::isnan(gamma_m)
+				|| std::fabs(gamma_p - gamma_0) < abort_threshold || std::fabs(gamma_m - gamma_0) < abort_threshold)
 			{
 				undefined = true;
 			}

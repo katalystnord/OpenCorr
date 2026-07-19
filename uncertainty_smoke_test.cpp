@@ -14,6 +14,8 @@ using namespace std;
 
 int main()
 {
+	int failures = 0;
+
 	string ref_image_path = "examples/2d_dic/oht_cfrp_0.bmp";
 	string tar_image_path = "examples/2d_dic/oht_cfrp_4.bmp";
 	Image2D ref_img(ref_image_path);
@@ -119,9 +121,73 @@ int main()
 	csv_out.close();
 	cout << "Wrote " << printed << " rows to " << file_path << endl;
 
+	//--- regression: beta's "not computed"/"degenerate subset" sentinel must be -1.f, not
+	//0.f -- beta is a reciprocal-slope conditioning score where smaller is better, so 0.f
+	//would misleadingly read as "extremely well-conditioned" instead of "never evaluated" ---
+	cout << endl << "=== beta sentinel must be -1.f, not 0.f, for POIs never evaluated ===" << endl;
+	{
+		//case 1: precondition failure (zncc < 0) -- never reaches the conditioning probe at all
+		POI2D poi_failed_precondition(Point2D(60.f, 60.f));
+		poi_failed_precondition.result.zncc = -1.f;
+		Uncertainty2D uq_precondition(subset_radius_x, subset_radius_y, 1);
+		uq_precondition.setImages(ref_img, tar_img);
+		uq_precondition.prepare();
+		uq_precondition.compute(&poi_failed_precondition);
+		bool precondition_ok = poi_failed_precondition.result.beta == -1.f;
+		cout << "  zncc<0 precondition: beta=" << poi_failed_precondition.result.beta
+			<< " " << (precondition_ok ? "PASS" : "FAIL") << endl;
+		if (!precondition_ok) failures++;
+
+		//case 2: out-of-bounds subset (too close to the image edge)
+		POI2D poi_out_of_bounds(Point2D(2.f, 2.f)); //subset_radius=16, so this subset runs off the image
+		poi_out_of_bounds.result.zncc = 0.9f;
+		Uncertainty2D uq_bounds(subset_radius_x, subset_radius_y, 1);
+		uq_bounds.setImages(ref_img, tar_img);
+		uq_bounds.prepare();
+		uq_bounds.compute(&poi_out_of_bounds);
+		bool bounds_ok = poi_out_of_bounds.result.beta == -1.f;
+		cout << "  out-of-bounds subset: beta=" << poi_out_of_bounds.result.beta
+			<< " " << (bounds_ok ? "PASS" : "FAIL") << endl;
+		if (!bounds_ok) failures++;
+
+		//case 3: degenerate (perfectly uniform-intensity) subset -- ref_mean_norm <= 0
+		Image2D flat_ref(64, 64), flat_tar(64, 64);
+		flat_ref.eg_mat.setConstant(128.f);
+		flat_tar.eg_mat.setConstant(128.f);
+		POI2D poi_flat(Point2D(32.f, 32.f));
+		poi_flat.result.zncc = 0.9f;
+		Uncertainty2D uq_flat(subset_radius_x, subset_radius_y, 1);
+		uq_flat.setImages(flat_ref, flat_tar);
+		uq_flat.prepare();
+		uq_flat.compute(&poi_flat);
+		bool flat_ok = poi_flat.result.beta == -1.f;
+		cout << "  degenerate uniform-intensity subset: beta=" << poi_flat.result.beta
+			<< " " << (flat_ok ? "PASS" : "FAIL") << endl;
+		if (!flat_ok) failures++;
+
+		//case 4: znssd()'s own out-of-bounds guard -- a POI whose REFERENCE position passes
+		//compute()'s coarse bounds precondition, but whose already-converged deformation.u
+		//warps the TARGET subset entirely outside the image. Without znssd()'s own guard,
+		//BicubicBspline's -1.f out-of-bounds sentinel would be sampled as if it were a real
+		//pixel intensity and silently blended into gamma_0/gamma_p/gamma_m.
+		POI2D poi_warped_oob(Point2D(32.f, 32.f));
+		poi_warped_oob.result.zncc = 0.9f;
+		poi_warped_oob.deformation.u = 1000.f; //warps the target subset far outside any real image
+		Uncertainty2D uq_warped_oob(subset_radius_x, subset_radius_y, 1);
+		uq_warped_oob.setImages(ref_img, tar_img);
+		uq_warped_oob.prepare();
+		uq_warped_oob.compute(&poi_warped_oob);
+		bool warped_oob_ok = poi_warped_oob.result.beta == -1.f;
+		cout << "  converged deformation warps target subset out of bounds: beta=" << poi_warped_oob.result.beta
+			<< " " << (warped_oob_ok ? "PASS" : "FAIL") << endl;
+		if (!warped_oob_ok) failures++;
+	}
+
+	cout << endl << (failures == 0 ? "ALL CHECKS PASSED" : "SOME CHECKS FAILED") << " (" << failures << " failure(s))" << endl;
+
 	delete fftcc;
 	delete icgn1;
 	delete uq;
 
-	return 0;
+	return failures == 0 ? 0 : 1;
 }
