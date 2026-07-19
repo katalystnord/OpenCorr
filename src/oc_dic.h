@@ -18,6 +18,7 @@
 #define _DIC_H_
 
 #include<memory>
+#include<string>
 
 #include "oc_poi.h"
 #include "oc_subset.h"
@@ -25,15 +26,34 @@
 namespace opencorr
 {
 
-	// definition of abnormal ZNCC value
-	// 0: reset for further processing
-	// -1: insufficient features in subset (FeatureAffine)
-	// -2: inconsistant set in RANSAC (FeatureAffine)
-	// -3: terminated at the beginning of (ICGN)
-	// -4: Not convergence in iteration (ICGN)
-	// -5: NaN in resutls (ICGN)
-	// -6: rejected by reliability-guided propagation, quality or spatial jump-tolerance gate not met (ReliabilityGuided2D)
-	// -7: rejected by sequence tracking, frame-to-frame (temporal) jump-tolerance gate not met (SequenceTracker2D)
+	//named status codes for POI2D/POI3D::result.zncc's "abnormal value" sentinel range.
+	//values match the numeric codes solvers have always assigned (so most existing
+	//comparisons against raw numbers keep working unchanged) with one deliberate fix:
+	//NR2D1's out-of-bounds-subset/invalid-guess check previously stamped -1 (colliding
+	//with FeatureAffine's unrelated "insufficient features" meaning) and used a
+	//different threshold than ICGN/ICLM's own version of the identical check -- both
+	//are now aligned to STATUS_INVALID_SUBSET_OR_GUESS's shared convention, see
+	//oc_nr.cpp. A given code can also mean slightly different things across solver
+	//classes (noted per-value below, and not perfectly consistent even among them --
+	//e.g. SimplexMatch2D unconditionally overwrites on this check where ICGN/ICLM/NR
+	//preserve a pre-existing negative value instead); use statusDescription() below
+	//for a precise, class-agnostic human-readable string.
+	enum StatusFlag : int
+	{
+		STATUS_GOOD = 0, //non-negative ZNCC: correlation succeeded
+		STATUS_INSUFFICIENT_FEATURES = -1, //too few matched keypoints in subset (FeatureAffine)
+		STATUS_DEGENERATE_INPUT = -2, //RANSAC consensus set too small (FeatureAffine), or near-uniform-intensity reference subset (SimplexMatch2D)
+		STATUS_INVALID_SUBSET_OR_GUESS = -3, //subset out of image bounds, or incoming initial guess is NaN/negative/out of range (ICGN, ICLM, NR, SimplexMatch2D)
+		STATUS_MAX_ITERATIONS_REACHED = -4, //iterative solver hit its iteration cap without converging (ICGN, ICLM, NR)
+		STATUS_NAN_IN_RESULT = -5, //ZNCC or displacement came out NaN (ICGN, ICLM, NR)
+		STATUS_RELIABILITY_GUIDED_REJECTED = -6, //quality or spatial jump-tolerance gate not met during RG-DIC propagation (ReliabilityGuided2D)
+		STATUS_SEQUENCE_JUMP_REJECTED = -7, //frame-to-frame (temporal) jump-tolerance gate not met (SequenceTracker2D)
+		STATUS_HESSIAN_SINGULAR = -8, //Hessian too ill-conditioned to invert reliably (ICGN only -- ICLM's Levenberg-Marquardt damping already handles this differently, see oc_iclm.cpp)
+	};
+
+	//human-readable description of a StatusFlag code (or any non-negative ZNCC, described as success).
+	//takes a float since that's the storage type of Result2D::zncc/Result3D::zncc.
+	std::string statusDescription(float status_code);
 
 	//structure for brute force searching
 	struct KeypointIndex

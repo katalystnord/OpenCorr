@@ -40,14 +40,16 @@ namespace opencorr
 			}
 		};
 
-		//true if zncc is exactly one of the solvers' own named failure codes (oc_dic.h),
-		//as opposed to a real (if possibly low or negative) computed correlation value.
-		//Exact float comparison is safe here since these are hardcoded literal constants
-		//the solvers assign directly (e.g. `poi->result.zncc = -3.f;`), never a value
-		//arrived at through computation that could drift off the literal.
+		//true if zncc is exactly one of the solvers' own named failure codes (StatusFlag,
+		//oc_dic.h), as opposed to a real (if possibly low or negative) computed correlation
+		//value. Exact float comparison is safe here since these are hardcoded literal
+		//constants the solvers assign directly (e.g. `poi->result.zncc = (float)STATUS_INVALID_SUBSET_OR_GUESS;`),
+		//never a value arrived at through computation that could drift off the literal.
 		bool isSolverFailureSentinel(float zncc)
 		{
-			return zncc == -1.f || zncc == -2.f || zncc == -3.f || zncc == -4.f || zncc == -5.f;
+			return zncc == (float)STATUS_INSUFFICIENT_FEATURES || zncc == (float)STATUS_DEGENERATE_INPUT
+				|| zncc == (float)STATUS_INVALID_SUBSET_OR_GUESS || zncc == (float)STATUS_MAX_ITERATIONS_REACHED
+				|| zncc == (float)STATUS_NAN_IN_RESULT || zncc == (float)STATUS_HESSIAN_SINGULAR;
 		}
 	}
 
@@ -145,17 +147,17 @@ namespace opencorr
 				}
 				else if (!isSolverFailureSentinel(neighbor.result.zncc))
 				{
-					//only stamp -6 when the solver DIDN'T already report one of its own named
-					//failure codes (-1/-2/-3/-4/-5, see oc_dic.h) -- exact-matched, since those
-					//are hardcoded literal constants the solvers assign directly, not computed
-					//values that could drift. A solver can legitimately converge (hit none of
-					//its own failure branches) yet still report a low or even negative ZNCC for
-					//a genuinely poor match -- zncc>=0 is not a reliable "solver succeeded" test
-					//by itself, so checking against the specific known sentinel values instead
-					//of a threshold is what actually distinguishes "the correlation itself
-					//failed" from "it succeeded (however poorly) but propagation rejected it,"
-					//which call for different tuning responses
-					neighbor.result.zncc = -6.f;
+					//only stamp STATUS_RELIABILITY_GUIDED_REJECTED when the solver DIDN'T already
+					//report one of its own named failure codes (StatusFlag, oc_dic.h) --
+					//exact-matched, since those are hardcoded literal constants the solvers assign
+					//directly, not computed values that could drift. A solver can legitimately
+					//converge (hit none of its own failure branches) yet still report a low or
+					//even negative ZNCC for a genuinely poor match -- zncc>=0 is not a reliable
+					//"solver succeeded" test by itself, so checking against the specific known
+					//sentinel values instead of a threshold is what actually distinguishes "the
+					//correlation itself failed" from "it succeeded (however poorly) but
+					//propagation rejected it," which call for different tuning responses
+					neighbor.result.zncc = (float)STATUS_RELIABILITY_GUIDED_REJECTED;
 				}
 			}
 		}

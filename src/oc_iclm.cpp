@@ -168,7 +168,7 @@ namespace opencorr
 			|| fabs(poi->deformation.u) >= ref_img->width || fabs(poi->deformation.v) >= ref_img->height
 			|| poi->result.zncc < 0 || std::isnan(poi->deformation.u) || std::isnan(poi->deformation.v))
 		{
-			poi->result.zncc = poi->result.zncc >= 0 ? -3.f : poi->result.zncc;
+			poi->result.zncc = poi->result.zncc >= 0 ? (float)STATUS_INVALID_SUBSET_OR_GUESS : poi->result.zncc;
 			return;
 		}
 
@@ -345,7 +345,7 @@ namespace opencorr
 		//check if the iteration converge at the desired target
 		if (poi->result.convergence >= conv_criterion && poi->result.iteration >= stop_condition)
 		{
-			poi->result.zncc = -4.f;
+			poi->result.zncc = (float)STATUS_MAX_ITERATIONS_REACHED;
 		}
 
 		//check if the case of NaN occurs for ZNCC or displacments
@@ -353,7 +353,7 @@ namespace opencorr
 		{
 			poi->deformation.u = poi->result.u0;
 			poi->deformation.v = poi->result.v0;
-			poi->result.zncc = -5.f;
+			poi->result.zncc = (float)STATUS_NAN_IN_RESULT;
 		}
 	}
 
@@ -520,7 +520,7 @@ namespace opencorr
 			|| fabs(poi->deformation.u) >= ref_img->width || fabs(poi->deformation.v) >= ref_img->height
 			|| poi->result.zncc < 0 || std::isnan(poi->deformation.u) || std::isnan(poi->deformation.v))
 		{
-			poi->result.zncc = poi->result.zncc >= 0 ? -3.f : poi->result.zncc;
+			poi->result.zncc = poi->result.zncc >= 0 ? (float)STATUS_INVALID_SUBSET_OR_GUESS : poi->result.zncc;
 			return;
 		}
 		int subset_width = 2 * subset_rx + 1;
@@ -717,7 +717,7 @@ namespace opencorr
 		//check if the iteration converge at the desired target
 		if (poi->result.convergence >= conv_criterion && poi->result.iteration >= stop_condition)
 		{
-			poi->result.zncc = -4.f;
+			poi->result.zncc = (float)STATUS_MAX_ITERATIONS_REACHED;
 		}
 
 		//check if the case of NaN occurs for ZNCC or displacments
@@ -725,7 +725,7 @@ namespace opencorr
 		{
 			poi->deformation.u = poi->result.u0;
 			poi->deformation.v = poi->result.v0;
-			poi->result.zncc = -5.f;
+			poi->result.zncc = (float)STATUS_NAN_IN_RESULT;
 		}
 	}
 

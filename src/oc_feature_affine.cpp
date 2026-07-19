@@ -140,7 +140,7 @@ namespace opencorr
 
 			if (neighbor_num < ransac_config.sample_mumber)
 			{
-				poi->result.zncc = -1.f;
+				poi->result.zncc = (float)STATUS_INSUFFICIENT_FEATURES;
 				return;
 			}
 			else
@@ -185,7 +185,7 @@ namespace opencorr
 
 			if (neighbor_num < ransac_config.sample_mumber)
 			{
-				poi->result.zncc = -1.f;
+				poi->result.zncc = (float)STATUS_INSUFFICIENT_FEATURES;
 				return;
 			}
 			else
@@ -295,7 +295,7 @@ namespace opencorr
 		int max_set_size = (int)max_set.size();
 		if (max_set_size < 3) //essential condition to solve the equation
 		{
-			poi->result.zncc = -2.f;
+			poi->result.zncc = (float)STATUS_DEGENERATE_INPUT;
 			return;
 		}
 		else
@@ -442,7 +442,7 @@ namespace opencorr
 
 		if (neighbor_num < ransac_config.sample_mumber)
 		{
-			poi->result.zncc = -1.f;
+			poi->result.zncc = (float)STATUS_INSUFFICIENT_FEATURES;
 			return;
 		}
 		else
@@ -554,7 +554,7 @@ namespace opencorr
 			int max_set_size = (int)max_set.size();
 			if (max_set_size < 4) //essential condition to solve the equation
 			{
-				poi->result.zncc = -2.f;
+				poi->result.zncc = (float)STATUS_DEGENERATE_INPUT;
 				return;
 			}
 

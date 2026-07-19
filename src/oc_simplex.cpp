@@ -352,7 +352,7 @@ namespace opencorr
 			//Nelder-Mead instead of being cleanly rejected, and NaN comparisons in the
 			//optimizer's vertex selection are all false, so it would silently return a
 			//garbage "best" vertex rather than erroring
-			poi->result.zncc = -3.f;
+			poi->result.zncc = (float)STATUS_INVALID_SUBSET_OR_GUESS;
 			return;
 		}
 
@@ -362,7 +362,7 @@ namespace opencorr
 
 		if (ref_mean_norm <= 0.f)
 		{
-			poi->result.zncc = -2.f; //degenerate (near-uniform-intensity) reference subset
+			poi->result.zncc = (float)STATUS_DEGENERATE_INPUT; //near-uniform-intensity reference subset
 			return;
 		}
 

@@ -167,150 +167,156 @@ namespace opencorr
 			|| fabs(poi->deformation.u) >= ref_img->width || fabs(poi->deformation.v) >= ref_img->height
 			|| poi->result.zncc < 0 || std::isnan(poi->deformation.u) || std::isnan(poi->deformation.v))
 		{
-			poi->result.zncc = poi->result.zncc < -1 ? poi->result.zncc : -1;
+			//matches ICGN2D1/ICLM2D1's identical out-of-bounds-subset/invalid-guess precondition
+			//check, including the early return (this branch used to be an if/else that fell
+			//through to the post-loop convergence/NaN checks below instead of returning --
+			//which could silently overwrite this rejection with a stale
+			//STATUS_MAX_ITERATIONS_REACHED left over from an earlier compute() call on the
+			//same POI2D, e.g. via ReliabilityGuided2D's retry-on-a-reused-POI pattern, since
+			//poi->result.convergence/iteration aren't reset by this branch)
+			poi->result.zncc = poi->result.zncc >= 0 ? (float)STATUS_INVALID_SUBSET_OR_GUESS : poi->result.zncc;
+			return;
 		}
-		else
+
+		int subset_width = 2 * subset_radius_x + 1;
+		int subset_height = 2 * subset_radius_y + 1;
+
+		//set reference subset
+		fa_nr->ref_subset->center = (Point2D)*poi;
+		fa_nr->ref_subset->fill(ref_img);
+		float ref_mean_norm = fa_nr->ref_subset->zeroMeanNorm();
+
+		//set target subset
+		fa_nr->tar_subset->center = (Point2D)*poi;
+
+		//get initial guess
+		Deformation2D1 p_initial(poi->deformation.u, poi->deformation.ux, poi->deformation.uy, poi->deformation.v, poi->deformation.vx, poi->deformation.vy);
+
+		//Newton-Raphson iteration
+		int iteration_counter = 0; //initialize iteration counter
+		Deformation2D1 p_current, p_increment;
+		p_current.setDeformation(p_initial);
+		float dp_norm_max, znssd;
+		do
 		{
-			int subset_width = 2 * subset_radius_x + 1;
-			int subset_height = 2 * subset_radius_y + 1;
-
-			//set reference subset
-			fa_nr->ref_subset->center = (Point2D)*poi;
-			fa_nr->ref_subset->fill(ref_img);
-			float ref_mean_norm = fa_nr->ref_subset->zeroMeanNorm();
-
-			//set target subset
-			fa_nr->tar_subset->center = (Point2D)*poi;
-
-			//get initial guess
-			Deformation2D1 p_initial(poi->deformation.u, poi->deformation.ux, poi->deformation.uy, poi->deformation.v, poi->deformation.vx, poi->deformation.vy);
-
-			//Newton-Raphson iteration
-			int iteration_counter = 0; //initialize iteration counter
-			Deformation2D1 p_current, p_increment;
-			p_current.setDeformation(p_initial);
-			float dp_norm_max, znssd;
-			do
+			iteration_counter++;
+			//reconstruct the subsets of warped target as well as the corresponding matrices of its gradients
+			for (int r = 0; r < subset_height; r++)
 			{
-				iteration_counter++;
-				//reconstruct the subsets of warped target as well as the corresponding matrices of its gradients
-				for (int r = 0; r < subset_height; r++)
+				for (int c = 0; c < subset_width; c++)
 				{
-					for (int c = 0; c < subset_width; c++)
-					{
-						int x_local = c - subset_radius_x;
-						int y_local = r - subset_radius_y;
-						Point2D local_coor(x_local, y_local);
-						Point2D warped_coor = p_current.warp(local_coor);
-						Point2D global_coor = fa_nr->tar_subset->center + warped_coor;
+					int x_local = c - subset_radius_x;
+					int y_local = r - subset_radius_y;
+					Point2D local_coor(x_local, y_local);
+					Point2D warped_coor = p_current.warp(local_coor);
+					Point2D global_coor = fa_nr->tar_subset->center + warped_coor;
 
-						fa_nr->tar_subset->eg_mat(r, c) = tar_interp->compute(global_coor);
-						fa_nr->tar_gradient_x(r, c) = tar_interp_x->compute(global_coor);
-						fa_nr->tar_gradient_y(r, c) = tar_interp_y->compute(global_coor);
-					}
+					fa_nr->tar_subset->eg_mat(r, c) = tar_interp->compute(global_coor);
+					fa_nr->tar_gradient_x(r, c) = tar_interp_x->compute(global_coor);
+					fa_nr->tar_gradient_y(r, c) = tar_interp_y->compute(global_coor);
 				}
-				float tar_mean_norm = fa_nr->tar_subset->zeroMeanNorm();
+			}
+			float tar_mean_norm = fa_nr->tar_subset->zeroMeanNorm();
 
-				//build the Hessian matrix
-				fa_nr->hessian.setZero();
-				for (int r = 0; r < subset_height; r++)
+			//build the Hessian matrix
+			fa_nr->hessian.setZero();
+			for (int r = 0; r < subset_height; r++)
+			{
+				for (int c = 0; c < subset_width; c++)
 				{
-					for (int c = 0; c < subset_width; c++)
+					int x_local = c - subset_radius_x;
+					int y_local = r - subset_radius_y;
+					float tar_grad_x = fa_nr->tar_gradient_x(r, c);
+					float tar_grad_y = fa_nr->tar_gradient_y(r, c);
+
+					fa_nr->sd_img[r][c][0] = tar_grad_x;
+					fa_nr->sd_img[r][c][1] = tar_grad_x * x_local;
+					fa_nr->sd_img[r][c][2] = tar_grad_x * y_local;
+					fa_nr->sd_img[r][c][3] = tar_grad_y;
+					fa_nr->sd_img[r][c][4] = tar_grad_y * x_local;
+					fa_nr->sd_img[r][c][5] = tar_grad_y * y_local;
+
+					for (int i = 0; i < 6; i++)
 					{
-						int x_local = c - subset_radius_x;
-						int y_local = r - subset_radius_y;
-						float tar_grad_x = fa_nr->tar_gradient_x(r, c);
-						float tar_grad_y = fa_nr->tar_gradient_y(r, c);
-
-						fa_nr->sd_img[r][c][0] = tar_grad_x;
-						fa_nr->sd_img[r][c][1] = tar_grad_x * x_local;
-						fa_nr->sd_img[r][c][2] = tar_grad_x * y_local;
-						fa_nr->sd_img[r][c][3] = tar_grad_y;
-						fa_nr->sd_img[r][c][4] = tar_grad_y * x_local;
-						fa_nr->sd_img[r][c][5] = tar_grad_y * y_local;
-
-						for (int i = 0; i < 6; i++)
+						for (int j = 0; j < 6; j++)
 						{
-							for (int j = 0; j < 6; j++)
-							{
-								fa_nr->hessian(i, j) += (fa_nr->sd_img[r][c][i] * fa_nr->sd_img[r][c][j]);
-							}
+							fa_nr->hessian(i, j) += (fa_nr->sd_img[r][c][i] * fa_nr->sd_img[r][c][j]);
 						}
 					}
 				}
+			}
 
-				//calculate the inversed Hessian matrix
-				fa_nr->inv_hessian = fa_nr->hessian.inverse();
+			//calculate the inversed Hessian matrix
+			fa_nr->inv_hessian = fa_nr->hessian.inverse();
 
-				//calculate error image
-				fa_nr->error_img = fa_nr->ref_subset->eg_mat * (tar_mean_norm / ref_mean_norm) - (fa_nr->tar_subset->eg_mat);
+			//calculate error image
+			fa_nr->error_img = fa_nr->ref_subset->eg_mat * (tar_mean_norm / ref_mean_norm) - (fa_nr->tar_subset->eg_mat);
 
-				//calculate ZNSSD
-				znssd = fa_nr->error_img.squaredNorm() / (tar_mean_norm * tar_mean_norm);
+			//calculate ZNSSD
+			znssd = fa_nr->error_img.squaredNorm() / (tar_mean_norm * tar_mean_norm);
 
-				//calculate numerator
-				float numerator[6] = { 0.f };
-				for (int r = 0; r < subset_height; r++)
+			//calculate numerator
+			float numerator[6] = { 0.f };
+			for (int r = 0; r < subset_height; r++)
+			{
+				for (int c = 0; c < subset_width; c++)
 				{
-					for (int c = 0; c < subset_width; c++)
+					for (int i = 0; i < 6; i++)
 					{
-						for (int i = 0; i < 6; i++)
-						{
-							numerator[i] += (fa_nr->sd_img[r][c][i] * fa_nr->error_img(r, c));
-						}
+						numerator[i] += (fa_nr->sd_img[r][c][i] * fa_nr->error_img(r, c));
 					}
 				}
+			}
 
-				//calculate dp
-				float dp[6] = { 0.f };
-				for (int i = 0; i < 6; i++)
+			//calculate dp
+			float dp[6] = { 0.f };
+			for (int i = 0; i < 6; i++)
+			{
+				for (int j = 0; j < 6; j++)
 				{
-					for (int j = 0; j < 6; j++)
-					{
-						dp[i] += (fa_nr->inv_hessian(i, j) * numerator[j]);
-					}
+					dp[i] += (fa_nr->inv_hessian(i, j) * numerator[j]);
 				}
-				p_increment.setDeformation(dp);
+			}
+			p_increment.setDeformation(dp);
 
-				//update p
-				p_current.setDeformation(p_current.u + p_increment.u, p_current.ux + p_increment.ux, p_current.uy + p_increment.uy,
-					p_current.v + p_increment.v, p_current.vx + p_increment.vx, p_current.vy + p_increment.vy);
+			//update p
+			p_current.setDeformation(p_current.u + p_increment.u, p_current.ux + p_increment.ux, p_current.uy + p_increment.uy,
+				p_current.v + p_increment.v, p_current.vx + p_increment.vx, p_current.vy + p_increment.vy);
 
-				//check convergence
-				int subset_radius_x2 = subset_radius_x * subset_radius_x;
-				int subset_radius_y2 = subset_radius_y * subset_radius_y;
+			//check convergence
+			int subset_radius_x2 = subset_radius_x * subset_radius_x;
+			int subset_radius_y2 = subset_radius_y * subset_radius_y;
 
-				dp_norm_max = 0.f;
-				dp_norm_max += p_increment.u * p_increment.u;
-				dp_norm_max += p_increment.ux * p_increment.ux * subset_radius_x2;
-				dp_norm_max += p_increment.uy * p_increment.uy * subset_radius_y2;
-				dp_norm_max += p_increment.v * p_increment.v;
-				dp_norm_max += p_increment.vx * p_increment.vx * subset_radius_x2;
-				dp_norm_max += p_increment.vy * p_increment.vy * subset_radius_y2;
+			dp_norm_max = 0.f;
+			dp_norm_max += p_increment.u * p_increment.u;
+			dp_norm_max += p_increment.ux * p_increment.ux * subset_radius_x2;
+			dp_norm_max += p_increment.uy * p_increment.uy * subset_radius_y2;
+			dp_norm_max += p_increment.v * p_increment.v;
+			dp_norm_max += p_increment.vx * p_increment.vx * subset_radius_x2;
+			dp_norm_max += p_increment.vy * p_increment.vy * subset_radius_y2;
 
-				dp_norm_max = sqrt(dp_norm_max);
-			} while (iteration_counter < stop_condition && dp_norm_max >= conv_criterion);
+			dp_norm_max = sqrt(dp_norm_max);
+		} while (iteration_counter < stop_condition && dp_norm_max >= conv_criterion);
 
-			//store the final result
-			poi->deformation.u = p_current.u;
-			poi->deformation.ux = p_current.ux;
-			poi->deformation.uy = p_current.uy;
-			poi->deformation.v = p_current.v;
-			poi->deformation.vx = p_current.vx;
-			poi->deformation.vy = p_current.vy;
+		//store the final result
+		poi->deformation.u = p_current.u;
+		poi->deformation.ux = p_current.ux;
+		poi->deformation.uy = p_current.uy;
+		poi->deformation.v = p_current.v;
+		poi->deformation.vx = p_current.vx;
+		poi->deformation.vy = p_current.vy;
 
-			//save the parameters for output
-			poi->result.u0 = p_initial.u;
-			poi->result.v0 = p_initial.v;
-			poi->result.zncc = 0.5f * (2 - znssd);
-			poi->result.iteration = (float)iteration_counter;
-			poi->result.convergence = dp_norm_max;
-		}
+		//save the parameters for output
+		poi->result.u0 = p_initial.u;
+		poi->result.v0 = p_initial.v;
+		poi->result.zncc = 0.5f * (2 - znssd);
+		poi->result.iteration = (float)iteration_counter;
+		poi->result.convergence = dp_norm_max;
 
 		//check if the iteration converge at the desired target
 		if (poi->result.convergence >= conv_criterion && poi->result.iteration >= stop_condition)
 		{
-			poi->result.zncc = -4.f;
+			poi->result.zncc = (float)STATUS_MAX_ITERATIONS_REACHED;
 		}
 
 		//check if the case of NaN occurs for ZNCC or displacments
@@ -318,7 +324,7 @@ namespace opencorr
 		{
 			poi->deformation.u = poi->result.u0;
 			poi->deformation.v = poi->result.v0;
-			poi->result.zncc = -5;
+			poi->result.zncc = (float)STATUS_NAN_IN_RESULT;
 		}
 	}
 

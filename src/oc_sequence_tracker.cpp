@@ -113,7 +113,7 @@ namespace opencorr
 				{
 					status.jump_rejected_count++;
 					poi_queue[i].result = working[i].result;
-					poi_queue[i].result.zncc = -7.f; //rejected by sequence-tracker jump-tolerance, see oc_dic.h
+					poi_queue[i].result.zncc = (float)STATUS_SEQUENCE_JUMP_REJECTED;
 					continue; //don't accept this frame's result for this POI
 				}
 

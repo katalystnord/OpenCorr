@@ -12,12 +12,44 @@
  * More information about OpenCorr can be found at https://www.opencorr.org/
  */
 
+#include <limits>
 #include <omp.h>
- 
+
 #include "oc_icgn.h"
 
 namespace opencorr
 {
+	namespace
+	{
+		//Attempts to invert `hessian` into `inv_hessian`, rejecting (returning false, leaving
+		//inv_hessian untouched) a Hessian too ill-conditioned to invert reliably -- can happen
+		//for a near-uniform-intensity or otherwise low-texture (e.g. unidirectional-texture)
+		//subset. Shared by all of ICGN2D1/2D2/3D1's compute() overloads instead of repeating
+		//this check at each of the 5 call sites.
+		//
+		//Uses PartialPivLU::rcond() (reciprocal condition number) rather than
+		//FullPivLU::isInvertible(): this runs once per POI in a per-POI hot loop, and
+		//FullPivLU's full row+column pivot search is a strictly more expensive decomposition
+		//than the PartialPivLU that Eigen's own plain .inverse() already used internally for
+		//these matrix sizes (6x6/12x12 exceed Eigen's cofactor-based fast path, which only
+		//covers up to 4x4) -- rcond() reuses that same, cheaper decomposition instead of
+		//paying for a second, costlier one just to answer "is this invertible". rcond() is
+		//also a genuine conditioning measure (unlike isInvertible()'s near-exact-rank-deficiency
+		//test), so it actually catches "technically full rank but numerically unusable" cases,
+		//not just exactly-singular ones.
+		template<typename MatrixT>
+		bool invertHessian(const MatrixT& hessian, MatrixT& inv_hessian)
+		{
+			Eigen::PartialPivLU<MatrixT> lu(hessian);
+			if (lu.rcond() < 1.0e2f * std::numeric_limits<float>::epsilon())
+			{
+				return false;
+			}
+			inv_hessian = lu.inverse();
+			return true;
+		}
+	}
+
 	std::unique_ptr<ICGN2D1_> ICGN2D1_::allocate(int subset_radius_x, int subset_radius_y)
 	{
 		int subset_width = 2 * subset_radius_x + 1;
@@ -162,7 +194,7 @@ namespace opencorr
 			|| fabs(poi->deformation.u) >= ref_img->width || fabs(poi->deformation.v) >= ref_img->height
 			|| poi->result.zncc < 0 || std::isnan(poi->deformation.u) || std::isnan(poi->deformation.v))
 		{
-			poi->result.zncc = poi->result.zncc >= 0 ? -3.f : poi->result.zncc;
+			poi->result.zncc = poi->result.zncc >= 0 ? (float)STATUS_INVALID_SUBSET_OR_GUESS : poi->result.zncc;
 			return;
 		}
 
@@ -206,8 +238,16 @@ namespace opencorr
 			}
 		}
 
-		//calculate the inversed Hessian matrix
-		icgn->inv_hessian = icgn->hessian.inverse();
+		//reject a singular/ill-conditioned Hessian instead of silently inverting it into
+		//non-finite (or finite but meaningless) garbage -- can happen for a near-uniform-
+		//intensity or otherwise low-texture (e.g. unidirectional-texture) subset
+		if (!invertHessian(icgn->hessian, icgn->inv_hessian))
+		{
+			poi->subset_radius.x = subset_rx;
+			poi->subset_radius.y = subset_ry;
+			poi->result.zncc = (float)STATUS_HESSIAN_SINGULAR;
+			return;
+		}
 
 		//set target subset
 		icgn->tar_subset->center = (Point2D)*poi;
@@ -315,7 +355,7 @@ namespace opencorr
 		//check if the iteration converge at the desired target
 		if (poi->result.convergence >= conv_criterion && poi->result.iteration >= stop_condition)
 		{
-			poi->result.zncc = -4.f;
+			poi->result.zncc = (float)STATUS_MAX_ITERATIONS_REACHED;
 		}
 
 		//check if the case of NaN occurs for ZNCC or displacments
@@ -323,7 +363,7 @@ namespace opencorr
 		{
 			poi->deformation.u = poi->result.u0;
 			poi->deformation.v = poi->result.v0;
-			poi->result.zncc = -5.f;
+			poi->result.zncc = (float)STATUS_NAN_IN_RESULT;
 		}
 	}
 
@@ -358,7 +398,7 @@ namespace opencorr
 			|| fabs(poi->deformation.u) >= ref_img->width || fabs(poi->deformation.v) >= ref_img->height
 			|| poi->result.zncc < 0 || std::isnan(poi->deformation.u) || std::isnan(poi->deformation.v))
 		{
-			poi->result.zncc = poi->result.zncc >= 0 ? -3.f : poi->result.zncc;
+			poi->result.zncc = poi->result.zncc >= 0 ? (float)STATUS_INVALID_SUBSET_OR_GUESS : poi->result.zncc;
 			return;
 		}
 
@@ -405,8 +445,16 @@ namespace opencorr
 			}
 		}
 
-		//calculate the inversed Hessian matrix
-		icgn->inv_hessian = icgn->hessian.inverse();
+		//reject a singular/ill-conditioned Hessian instead of silently inverting it into
+		//non-finite (or finite but meaningless) garbage -- can happen for a near-uniform-
+		//intensity or otherwise low-texture (e.g. unidirectional-texture) subset
+		if (!invertHessian(icgn->hessian, icgn->inv_hessian))
+		{
+			poi->subset_radius.x = subset_rx;
+			poi->subset_radius.y = subset_ry;
+			poi->result.zncc = (float)STATUS_HESSIAN_SINGULAR;
+			return;
+		}
 
 		//set target subset
 		icgn->tar_subset->center.x = poi->x + center_offset.x;
@@ -514,7 +562,7 @@ namespace opencorr
 		//check if the iteration converge at the desired target
 		if (poi->result.convergence >= conv_criterion && poi->result.iteration >= stop_condition)
 		{
-			poi->result.zncc = -4.f;
+			poi->result.zncc = (float)STATUS_MAX_ITERATIONS_REACHED;
 		}
 
 		//check if the case of NaN occurs for ZNCC or displacments
@@ -522,7 +570,7 @@ namespace opencorr
 		{
 			poi->deformation.u = poi->result.u0;
 			poi->deformation.v = poi->result.v0;
-			poi->result.zncc = -5.f;
+			poi->result.zncc = (float)STATUS_NAN_IN_RESULT;
 		}
 	}
 
@@ -683,7 +731,7 @@ namespace opencorr
 			|| fabs(poi->deformation.u) >= ref_img->width || fabs(poi->deformation.v) >= ref_img->height
 			|| poi->result.zncc < 0 || std::isnan(poi->deformation.u) || std::isnan(poi->deformation.v))
 		{
-			poi->result.zncc = poi->result.zncc >= 0 ? -3.f : poi->result.zncc;
+			poi->result.zncc = poi->result.zncc >= 0 ? (float)STATUS_INVALID_SUBSET_OR_GUESS : poi->result.zncc;
 			return;
 		}
 		int subset_width = 2 * subset_rx + 1;
@@ -735,8 +783,16 @@ namespace opencorr
 			}
 		}
 
-		//calculate the inversed Hessian matrix
-		icgn->inv_hessian = icgn->hessian.inverse();
+		//reject a singular/ill-conditioned Hessian instead of silently inverting it into
+		//non-finite (or finite but meaningless) garbage -- can happen for a near-uniform-
+		//intensity or otherwise low-texture (e.g. unidirectional-texture) subset
+		if (!invertHessian(icgn->hessian, icgn->inv_hessian))
+		{
+			poi->subset_radius.x = subset_rx;
+			poi->subset_radius.y = subset_ry;
+			poi->result.zncc = (float)STATUS_HESSIAN_SINGULAR;
+			return;
+		}
 
 		//set target subset
 		icgn->tar_subset->center = (Point2D)*poi;
@@ -857,7 +913,7 @@ namespace opencorr
 		//check if the iteration converge at the desired target
 		if (poi->result.convergence >= conv_criterion && poi->result.iteration >= stop_condition)
 		{
-			poi->result.zncc = -4.f;
+			poi->result.zncc = (float)STATUS_MAX_ITERATIONS_REACHED;
 		}
 
 		//check if the case of NaN occurs for ZNCC or displacments
@@ -865,7 +921,7 @@ namespace opencorr
 		{
 			poi->deformation.u = poi->result.u0;
 			poi->deformation.v = poi->result.v0;
-			poi->result.zncc = -5.f;
+			poi->result.zncc = (float)STATUS_NAN_IN_RESULT;
 		}
 	}
 
@@ -900,7 +956,7 @@ namespace opencorr
 			|| fabs(poi->deformation.u) >= ref_img->width || fabs(poi->deformation.v) >= ref_img->height
 			|| poi->result.zncc < 0 || std::isnan(poi->deformation.u) || std::isnan(poi->deformation.v))
 		{
-			poi->result.zncc = poi->result.zncc >= 0 ? -3.f : poi->result.zncc;
+			poi->result.zncc = poi->result.zncc >= 0 ? (float)STATUS_INVALID_SUBSET_OR_GUESS : poi->result.zncc;
 			return;
 		}
 		//set subset dimension
@@ -956,8 +1012,16 @@ namespace opencorr
 			}
 		}
 
-		//calculate the inversed Hessian matrix
-		icgn->inv_hessian = icgn->hessian.inverse();
+		//reject a singular/ill-conditioned Hessian instead of silently inverting it into
+		//non-finite (or finite but meaningless) garbage -- can happen for a near-uniform-
+		//intensity or otherwise low-texture (e.g. unidirectional-texture) subset
+		if (!invertHessian(icgn->hessian, icgn->inv_hessian))
+		{
+			poi->subset_radius.x = subset_rx;
+			poi->subset_radius.y = subset_ry;
+			poi->result.zncc = (float)STATUS_HESSIAN_SINGULAR;
+			return;
+		}
 
 		//set target subset
 		icgn->tar_subset->center.x = poi->x + center_offset.x;
@@ -1079,7 +1143,7 @@ namespace opencorr
 		//check if the iteration converge at the desired target
 		if (poi->result.convergence >= conv_criterion && poi->result.iteration >= stop_condition)
 		{
-			poi->result.zncc = -4.f;
+			poi->result.zncc = (float)STATUS_MAX_ITERATIONS_REACHED;
 		}
 
 		//check if the case of NaN occurs for ZNCC or displacments
@@ -1087,7 +1151,7 @@ namespace opencorr
 		{
 			poi->deformation.u = poi->result.u0;
 			poi->deformation.v = poi->result.v0;
-			poi->result.zncc = -5.f;
+			poi->result.zncc = (float)STATUS_NAN_IN_RESULT;
 		}
 	}
 
@@ -1247,7 +1311,7 @@ namespace opencorr
 			|| fabs(poi->deformation.u) >= ref_img->dim_x || fabs(poi->deformation.v) >= ref_img->dim_y || fabs(poi->deformation.w) >= ref_img->dim_z
 			|| poi->result.zncc < 0 || std::isnan(poi->deformation.u) || std::isnan(poi->deformation.v) || std::isnan(poi->deformation.w))
 		{
-			poi->result.zncc = poi->result.zncc >= 0 ? -3.f : poi->result.zncc;
+			poi->result.zncc = poi->result.zncc >= 0 ? (float)STATUS_INVALID_SUBSET_OR_GUESS : poi->result.zncc;
 			return;
 		}
 		int subset_dim_x = 2 * subset_rx + 1;
@@ -1301,8 +1365,17 @@ namespace opencorr
 				}
 			}
 		}
-		//calculate the inversed Hessian matrix
-		icgn->inv_hessian = icgn->hessian.inverse();
+		//reject a singular/ill-conditioned Hessian instead of silently inverting it into
+		//non-finite (or finite but meaningless) garbage -- can happen for a near-uniform-
+		//intensity or otherwise low-texture (e.g. unidirectional-texture) subset
+		if (!invertHessian(icgn->hessian, icgn->inv_hessian))
+		{
+			poi->subset_radius.x = subset_rx;
+			poi->subset_radius.y = subset_ry;
+			poi->subset_radius.z = subset_rz;
+			poi->result.zncc = (float)STATUS_HESSIAN_SINGULAR;
+			return;
+		}
 
 		//set target subset
 		icgn->tar_subset->center = (Point3D)*poi;
@@ -1428,7 +1501,7 @@ namespace opencorr
 		//check if the iteration converge at the desired target
 		if (poi->result.convergence >= conv_criterion && poi->result.iteration >= stop_condition)
 		{
-			poi->result.zncc = -4.f;
+			poi->result.zncc = (float)STATUS_MAX_ITERATIONS_REACHED;
 		}
 
 		//check if the case of NaN occurs for ZNCC or displacments
@@ -1437,7 +1510,7 @@ namespace opencorr
 			poi->deformation.u = poi->result.u0;
 			poi->deformation.v = poi->result.v0;
 			poi->deformation.w = poi->result.w0;
-			poi->result.zncc = -5.f;
+			poi->result.zncc = (float)STATUS_NAN_IN_RESULT;
 		}
 	}
 
