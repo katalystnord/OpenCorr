@@ -17,6 +17,7 @@
 #ifndef _SHAPE_H_
 #define _SHAPE_H_
 
+#include <memory>
 #include <vector>
 
 #include "oc_point.h"
@@ -100,6 +101,41 @@ namespace opencorr
 	private:
 		int center_x, center_y;
 		float radius;
+	};
+
+	//Multiply-connected region: an outer shape with zero or more holes cut out of it,
+	//composed from any Shape2D-derived shapes (a polygon with circular holes, a circle
+	//with polygonal holes, etc.) -- issue tracked as "topology-aware ROI" phase 1a.
+	//
+	//Scope note: this is point-membership only (contains() = outer AND NOT any hole),
+	//same phase-1-only spirit as this file's own scope note above -- getOwnedPixels()
+	//(inherited from Shape2D) already makes this directly useful for masked POI-queue
+	//construction with a hole excluded (e.g. a bolt hole or window in a specimen).
+	//Deliberately NOT included, and not currently planned unless a concrete need for it
+	//arises: ncorr_2D_cpp's connectivity-aware subset/strain-neighborhood clipping (its
+	//`contig_subregion_generator`), which would let a subset's own interior follow the
+	//region's topology right up to a hole or crack edge instead of being excluded by a
+	//margin. That capability was scoped (large -- a novel connected-component/BFS
+	//primitive plus threading it through Subset2D/ICGN/ICLM's hot loops, the same
+	//correlation-kernel integration this file's phase 1/phase 2 split already defers)
+	//and judged not worth the cost/risk against OpenCorr's already-validated solver core
+	//for the value it adds beyond simply excluding a margin around the hole from the POI
+	//grid -- the value is real but concentrated in near-discontinuity precision (e.g.
+	//fracture-mechanics crack-tip fields), not the common case.
+	class RegionWithHoles2D : public Shape2D
+	{
+	public:
+		RegionWithHoles2D(std::unique_ptr<Shape2D> outer, std::vector<std::unique_ptr<Shape2D>> holes);
+
+		bool contains(int x, int y) const override;
+		int getMinX() const override;
+		int getMaxX() const override;
+		int getMinY() const override;
+		int getMaxY() const override;
+
+	private:
+		std::unique_ptr<Shape2D> outer;
+		std::vector<std::unique_ptr<Shape2D>> holes;
 	};
 
 }//namespace opencorr

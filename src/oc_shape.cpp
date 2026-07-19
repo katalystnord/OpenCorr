@@ -161,4 +161,44 @@ namespace opencorr
 	int Circle2D::getMinY() const { return (int)std::floor(center_y - radius); }
 	int Circle2D::getMaxY() const { return (int)std::ceil(center_y + radius); }
 
+	RegionWithHoles2D::RegionWithHoles2D(std::unique_ptr<Shape2D> outer, std::vector<std::unique_ptr<Shape2D>> holes)
+		: outer(std::move(outer)), holes(std::move(holes))
+	{
+		if (this->outer == nullptr)
+		{
+			throw std::string("RegionWithHoles2D: outer shape must not be null");
+		}
+
+		for (const auto& hole : this->holes)
+		{
+			if (hole == nullptr)
+			{
+				throw std::string("RegionWithHoles2D: hole shape must not be null");
+			}
+		}
+	}
+
+	bool RegionWithHoles2D::contains(int x, int y) const
+	{
+		if (!outer->contains(x, y))
+		{
+			return false;
+		}
+
+		for (const auto& hole : holes)
+		{
+			if (hole->contains(x, y))
+			{
+				return false;
+			}
+		}
+
+		return true;
+	}
+
+	int RegionWithHoles2D::getMinX() const { return outer->getMinX(); }
+	int RegionWithHoles2D::getMaxX() const { return outer->getMaxX(); }
+	int RegionWithHoles2D::getMinY() const { return outer->getMinY(); }
+	int RegionWithHoles2D::getMaxY() const { return outer->getMaxY(); }
+
 }//namespace opencorr
