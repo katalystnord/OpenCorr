@@ -21,6 +21,7 @@
 #include "oc_calibration.h"
 #include "oc_camera_calibrator.h"
 #include "oc_cine.h"
+#include "oc_crack_residual.h"
 #include "oc_cubic_bspline.h"
 #include "oc_deformation.h"
 #include "oc_dic.h"

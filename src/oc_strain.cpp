@@ -209,9 +209,21 @@ namespace opencorr
 				v_vector(i) = pois_fit[i].deformation.v;
 			}
 
-			//solve the equations to obtain gradients of u and v
-			Eigen::VectorXf u_gradient = coefficient_matrix.colPivHouseholderQr().solve(u_vector);
-			Eigen::VectorXf v_gradient = coefficient_matrix.colPivHouseholderQr().solve(v_vector);
+			//solve the equations to obtain gradients of u and v. A single QR decomposition is
+			//reused for both solves (colPivHouseholderQr() was previously called twice,
+			//decomposing the same coefficient_matrix redundantly) and its rank checked first --
+			//a local neighborhood that's degenerate for this fit (e.g. neighbors nearly
+			//collinear, or all but coincident) previously flowed straight into solve() and
+			//produced a silently wrong strain value with no indication anything was wrong,
+			//unlike DICe's equivalent fit which gates on a condition-number check (GECON/rcond)
+			//before trusting the result
+			Eigen::ColPivHouseholderQR<Eigen::MatrixXf> qr(coefficient_matrix);
+			if (qr.rank() < 3)
+			{
+				return;
+			}
+			Eigen::VectorXf u_gradient = qr.solve(u_vector);
+			Eigen::VectorXf v_gradient = qr.solve(v_vector);
 			float ux = u_gradient(1, 0);
 			float uy = u_gradient(2, 0);
 			float vx = v_gradient(1, 0);
@@ -318,10 +330,17 @@ namespace opencorr
 				w_vector(i) = pois_fit[i].deformation.w;
 			}
 
-			//solve the equations to obtain gradients of u, v, and w
-			Eigen::VectorXf u_gradient = coefficient_matrix.colPivHouseholderQr().solve(u_vector);
-			Eigen::VectorXf v_gradient = coefficient_matrix.colPivHouseholderQr().solve(v_vector);
-			Eigen::VectorXf w_gradient = coefficient_matrix.colPivHouseholderQr().solve(w_vector);
+			//solve the equations to obtain gradients of u, v, and w -- single shared QR
+			//decomposition (see the 2D compute()'s own comment on why) plus the same
+			//degenerate-fit rank guard
+			Eigen::ColPivHouseholderQR<Eigen::MatrixXf> qr(coefficient_matrix);
+			if (qr.rank() < 4)
+			{
+				return;
+			}
+			Eigen::VectorXf u_gradient = qr.solve(u_vector);
+			Eigen::VectorXf v_gradient = qr.solve(v_vector);
+			Eigen::VectorXf w_gradient = qr.solve(w_vector);
 			float ux = u_gradient(1, 0);
 			float uy = u_gradient(2, 0);
 			float uz = u_gradient(3, 0);
@@ -435,10 +454,17 @@ namespace opencorr
 				w_vector(i) = pois_fit[i].deformation.w;
 			}
 
-			//solve the equations to obtain gradients of u, v, and w
-			Eigen::VectorXf u_gradient = coefficient_matrix.colPivHouseholderQr().solve(u_vector);
-			Eigen::VectorXf v_gradient = coefficient_matrix.colPivHouseholderQr().solve(v_vector);
-			Eigen::VectorXf w_gradient = coefficient_matrix.colPivHouseholderQr().solve(w_vector);
+			//solve the equations to obtain gradients of u, v, and w -- single shared QR
+			//decomposition (see the 2D compute()'s own comment on why) plus the same
+			//degenerate-fit rank guard
+			Eigen::ColPivHouseholderQR<Eigen::MatrixXf> qr(coefficient_matrix);
+			if (qr.rank() < 4)
+			{
+				return;
+			}
+			Eigen::VectorXf u_gradient = qr.solve(u_vector);
+			Eigen::VectorXf v_gradient = qr.solve(v_vector);
+			Eigen::VectorXf w_gradient = qr.solve(w_vector);
 			float ux = u_gradient(1, 0);
 			float uy = u_gradient(2, 0);
 			float uz = u_gradient(3, 0);
