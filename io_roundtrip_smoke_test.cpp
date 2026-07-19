@@ -241,6 +241,65 @@ int main()
 		if (!bogus_result.empty()) failures++;
 	}
 
+	// --- loadCalibration: previously untested and, unlike the other load*() functions,
+	// never switched to the shared tokenizeCsvLine() helper -- it kept the same class of
+	// npos-chaining bug (a missing delimiter's find() result fed unchecked into the next
+	// find()/substr() call) that tokenizeCsvLine was introduced to fix everywhere else.
+	// No saveCalibration() counterpart exists to round-trip against, so the file is built
+	// by hand here, matching the row format loadCalibration itself expects
+	// ("<label><delim><cam1><delim><cam2>", 1 header line + 13 intrinsics + 6 extrinsics) ---
+	{
+		ofstream calib_file("/tmp/oc_io_calibration.csv");
+		calib_file << "parameter,cam1,cam2" << endl;
+		for (int i = 0; i < 13; i++) calib_file << "p" << i << "," << (i + 0.5f) << "," << (i + 100.5f) << endl;
+		for (int i = 0; i < 6; i++) calib_file << "e" << i << "," << (i + 0.25f) << "," << (i + 200.25f) << endl;
+		calib_file.close();
+
+		Calibration calib_cam1, calib_cam2;
+		IO2D io_calib;
+		io_calib.setDelimiter(",");
+		io_calib.loadCalibration(calib_cam1, calib_cam2, "/tmp/oc_io_calibration.csv");
+
+		bool calib_ok = true;
+		for (int i = 0; i < 13; i++)
+		{
+			if (fabs(calib_cam1.intrinsics.cam_i[i] - (i + 0.5f)) > 1e-4f) calib_ok = false;
+			if (fabs(calib_cam2.intrinsics.cam_i[i] - (i + 100.5f)) > 1e-4f) calib_ok = false;
+		}
+		for (int i = 0; i < 6; i++)
+		{
+			if (fabs(calib_cam1.extrinsics.cam_e[i] - (i + 0.25f)) > 1e-4f) calib_ok = false;
+			if (fabs(calib_cam2.extrinsics.cam_e[i] - (i + 200.25f)) > 1e-4f) calib_ok = false;
+		}
+		cout << (calib_ok ? "PASS" : "FAIL") << ": loadCalibration() reads intrinsics/extrinsics for both cameras" << endl;
+		if (!calib_ok) failures++;
+
+		//a row missing its second delimiter (only 2 fields, "label,value" with no cam2 value)
+		//must be skipped cleanly -- pre-fix, the unchecked npos-derived position could reach
+		//substr() with a position argument past the string's end, throwing std::out_of_range
+		ofstream calib_malformed_file("/tmp/oc_io_calibration_malformed.csv");
+		calib_malformed_file << "parameter,cam1,cam2" << endl;
+		calib_malformed_file << "p0,1.5" << endl; //missing cam2 field entirely
+		for (int i = 1; i < 13; i++) calib_malformed_file << "p" << i << "," << (i + 0.5f) << "," << (i + 100.5f) << endl;
+		for (int i = 0; i < 6; i++) calib_malformed_file << "e" << i << "," << (i + 0.25f) << "," << (i + 200.25f) << endl;
+		calib_malformed_file.close();
+
+		Calibration calib_cam1_malformed, calib_cam2_malformed;
+		bool threw = false;
+		try
+		{
+			IO2D io_calib_malformed;
+			io_calib_malformed.setDelimiter(",");
+			io_calib_malformed.loadCalibration(calib_cam1_malformed, calib_cam2_malformed, "/tmp/oc_io_calibration_malformed.csv");
+		}
+		catch (...)
+		{
+			threw = true;
+		}
+		cout << (!threw ? "PASS" : "FAIL") << ": loadCalibration() skips a row missing its cam2 field instead of throwing" << endl;
+		if (threw) failures++;
+	}
+
 	// --- loadPoint2D/loadPoint3D/loadTable2DS/loadTable3D: previously untested by this
 	// file (only loadTable2D/loadDeformationTable2D had coverage) -- added alongside the
 	// oc_io.cpp CSV-tokenizer deduplication so all six load*() functions have a real

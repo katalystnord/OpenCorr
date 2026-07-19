@@ -164,56 +164,59 @@ namespace opencorr
 		if (!file_in.is_open())
 		{
 			std::cerr << "failed to read file " << file_path << std::endl;
+			return; //previously fell through to read further lines from an unopened stream
 		}
 
 		std::string data_line;
-		getline(file_in, data_line);
-		size_t position1, position2;
-		std::string variable;
+		getline(file_in, data_line); //header line, discarded
+
+		//extracts the cam1/cam2 float values from a "<label><delim><cam1><delim><cam2>" row.
+		//The label itself isn't numeric (a parameter name), so this can't go through the
+		//shared tokenizeCsvLine() helper above (which stof()s every field) -- instead this
+		//closes the same class of bug tokenizeCsvLine fixes for every other load*()
+		//function: the original version chained find()'s result straight into the next
+		//find()/substr() call without checking for std::string::npos first, so a row
+		//missing a delimiter fed a wrapped-around (size_t)-1-derived position into substr(),
+		//risking a thrown std::out_of_range instead of a clean, reported skip
+		auto readRow = [&](const std::string& line, int line_number, float& cam1_value, float& cam2_value) -> bool
+		{
+			size_t position1 = line.find(delimiter);
+			if (position1 == std::string::npos)
+			{
+				std::cerr << "failed to read parameter at line: " << line_number << std::endl;
+				return false;
+			}
+			position1 += delimiter.length();
+
+			size_t position2 = line.find(delimiter, position1);
+			if (position2 == std::string::npos)
+			{
+				std::cerr << "failed to read parameter at line: " << line_number << std::endl;
+				return false;
+			}
+
+			std::string cam1_str = line.substr(position1, position2 - position1);
+			std::string cam2_str = line.substr(position2 + delimiter.length());
+			if (cam1_str.empty() || cam2_str.empty())
+			{
+				std::cerr << "failed to read parameter at line: " << line_number << std::endl;
+				return false;
+			}
+
+			cam1_value = std::stof(cam1_str);
+			cam2_value = std::stof(cam2_str);
+			return true;
+		};
 
 		//read intrinsics
 		for (int i = 0; i < 13; i++)
 		{
 			getline(file_in, data_line);
-			position1 = 0;
-			position2 = 0;
-			position2 = data_line.find(delimiter, position1);
-			if (position2 == std::string::npos)
+			float cam1_value = 0.f, cam2_value = 0.f;
+			if (readRow(data_line, i, cam1_value, cam2_value))
 			{
-				std::cerr << "failed to read parameter at line: " << i << std::endl;
-			}
-
-			//read parameter for cam1
-			position1 = position2 + delimiter.length();
-			position2 = data_line.find(delimiter, position1);
-			if (position2 == std::string::npos)
-			{
-				std::cerr << "failed to read parameter at line: " << i << std::endl;
-			}
-			else
-			{
-				variable = data_line.substr(position1, position2 - position1);
-				if (!variable.empty())
-				{
-					calibration_cam1.intrinsics.cam_i[i] = std::stof(variable);
-				}
-				else
-				{
-					std::cerr << "failed to read parameter at line: " << i << std::endl;
-				}
-			}
-
-			//read parameter for cam2
-			position1 = position2 + delimiter.length();
-			position2 = data_line.length();
-			variable = data_line.substr(position1, position2 - position1);
-			if (!variable.empty())
-			{
-				calibration_cam2.intrinsics.cam_i[i] = std::stof(variable);
-			}
-			else
-			{
-				std::cerr << "failed to read parameter at line: " << i << std::endl;
+				calibration_cam1.intrinsics.cam_i[i] = cam1_value;
+				calibration_cam2.intrinsics.cam_i[i] = cam2_value;
 			}
 		}
 
@@ -221,45 +224,11 @@ namespace opencorr
 		for (int i = 0; i < 6; i++)
 		{
 			getline(file_in, data_line);
-			position1 = 0;
-			position2 = 0;
-			position2 = data_line.find(delimiter, position1);
-			if (position2 == std::string::npos)
+			float cam1_value = 0.f, cam2_value = 0.f;
+			if (readRow(data_line, i, cam1_value, cam2_value))
 			{
-				std::cerr << "failed to read parameter at line: " << i << std::endl;
-			}
-
-			//read parameter for cam1
-			position1 = position2 + delimiter.length();
-			position2 = data_line.find(delimiter, position1);
-			if (position2 == std::string::npos)
-			{
-				std::cerr << "failed to read parameter at line: " << i << std::endl;
-			}
-			else
-			{
-				variable = data_line.substr(position1, position2 - position1);
-				if (!variable.empty())
-				{
-					calibration_cam1.extrinsics.cam_e[i] = std::stof(variable);
-				}
-				else
-				{
-					std::cerr << "failed to read parameter at line: " << i << std::endl;
-				}
-			}
-
-			//read parameter for cam2
-			position1 = position2 + delimiter.length();
-			position2 = data_line.length();
-			variable = data_line.substr(position1, position2 - position1);
-			if (!variable.empty())
-			{
-				calibration_cam2.extrinsics.cam_e[i] = std::stof(variable);
-			}
-			else
-			{
-				std::cerr << "failed to read parameter at line: " << i << std::endl;
+				calibration_cam1.extrinsics.cam_e[i] = cam1_value;
+				calibration_cam2.extrinsics.cam_e[i] = cam2_value;
 			}
 		}
 		file_in.close();
