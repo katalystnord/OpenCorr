@@ -51,7 +51,7 @@ namespace opencorr
 		static void update(std::unique_ptr<ICLM2D1_>& instance, int subset_radius_x, int subset_radius_y);
 	};
 
-	class ICLM2D1 : public DIC
+	class ICLM2D1 : public DIC, public SplittablePrepare2D
 	{
 	private:
 		std::unique_ptr<Interpolation2D> tar_interp; //interpolation for generating target subset during iteration
@@ -74,8 +74,8 @@ namespace opencorr
 
 		void setDamping(float lambda, float alpha, float beta);
 
-		void prepareRef(); //calculate gradient maps of ref image
-		void prepareTar(); //calculate interpolation coefficient look_up table of tar image
+		void prepareRef() override; //calculate gradient maps of ref image
+		void prepareTar() override; //calculate interpolation coefficient look_up table of tar image
 		void prepare(); //calculate gradient maps of ref image and interpolation coefficient look_up table of tar image
 
 		void compute(POI2D* poi);
@@ -99,7 +99,7 @@ namespace opencorr
 		static void update(std::unique_ptr<ICLM2D2_>& instance, int subset_radius_x, int subset_radius_y);
 	};
 
-	class ICLM2D2 : public DIC
+	class ICLM2D2 : public DIC, public SplittablePrepare2D
 	{
 	private:
 		std::unique_ptr<Interpolation2D> tar_interp;
@@ -122,8 +122,8 @@ namespace opencorr
 
 		void setDamping(float lambda, float alpha, float beta);
 
-		void prepareRef();
-		void prepareTar();
+		void prepareRef() override;
+		void prepareTar() override;
 		void prepare();
 
 		void compute(POI2D* poi);

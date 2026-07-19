@@ -76,6 +76,22 @@ namespace opencorr
 		float distance; //Euclidean distance to the POI
 	};
 
+	//Optional capability: a solver whose prepare() step is naturally separable into a
+	//reference-image phase (depends only on ref_img -- expensive to redo when ref_img
+	//hasn't actually changed) and a target-image phase (must be redone whenever tar_img
+	//changes) can implement this alongside DIC, so a caller processing many frames
+	//against a fixed reference (SequenceTracker2D) can skip the redundant reference-side
+	//work on frames where the reference didn't change, instead of paying for a full
+	//prepare() every single frame. Purely additive -- a solver that doesn't implement
+	//this is used exactly as before, via its own combined prepare().
+	class SplittablePrepare2D
+	{
+	public:
+		virtual ~SplittablePrepare2D() = default;
+		virtual void prepareRef() = 0;
+		virtual void prepareTar() = 0;
+	};
+
 	class DIC
 	{
 	public:

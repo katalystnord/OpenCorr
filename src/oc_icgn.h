@@ -42,7 +42,7 @@ namespace opencorr
 		static void update(std::unique_ptr<ICGN2D1_>& instance, int subset_radius_x, int subset_radius_y);
 	};
 
-	class ICGN2D1 : public DIC
+	class ICGN2D1 : public DIC, public SplittablePrepare2D
 	{
 	private:
 		std::unique_ptr<Interpolation2D> tar_interp; //interpolation for generating target subset during iteration
@@ -61,8 +61,8 @@ namespace opencorr
 		void setIteration(float conv_criterion, float stop_condition);
 		void setIteration(POI2D* poi);
 
-		void prepareRef(); //calculate gradient maps of ref image
-		void prepareTar(); //calculate interpolation coefficient look_up table of tar image
+		void prepareRef() override; //calculate gradient maps of ref image
+		void prepareTar() override; //calculate interpolation coefficient look_up table of tar image
 		void prepare(); //calculate gradient maps of ref image and interpolation coefficient look_up table of tar image
 
 		void compute(POI2D* poi);
@@ -97,7 +97,7 @@ namespace opencorr
 		static void update(std::unique_ptr<ICGN2D2_>& instance, int subset_radius_x, int subset_radius_y);
 	};
 
-	class ICGN2D2 : public DIC
+	class ICGN2D2 : public DIC, public SplittablePrepare2D
 	{
 	private:
 		std::unique_ptr<Interpolation2D> tar_interp;
@@ -116,8 +116,8 @@ namespace opencorr
 		void setIteration(float conv_criterion, float stop_condition);
 		void setIteration(POI2D* poi);
 
-		void prepareRef();
-		void prepareTar();
+		void prepareRef() override;
+		void prepareTar() override;
 		void prepare();
 
 		void compute(POI2D* poi);

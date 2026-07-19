@@ -76,8 +76,20 @@ namespace opencorr
 		}
 
 		int ref_idx = 0;
+		int last_prepared_ref_idx = -1; //never equals a valid ref_idx, so frame 1 always fully prepares
 		std::vector<POI2D> working;
 		working.reserve(n);
+
+		//if the solver exposes the reference/target split (SplittablePrepare2D, oc_dic.h),
+		//a frame whose reference didn't just change only needs its target-side prepare
+		//redone -- the reference-side prepare (e.g. ICGN's reference-image gradient maps)
+		//depends only on ref_img, so redoing it against the SAME reference image every
+		//frame is pure wasted work under the default NO_UPDATE policy (reference_update_
+		//enabled=false), where ref_idx never changes after frame 1 at all. Solvers that
+		//don't implement the split (checked once, not per-frame, since which solver this
+		//is doesn't change during a single compute() call) fall back to the existing
+		//always-correct combined prepare() every frame.
+		SplittablePrepare2D* splittable = dynamic_cast<SplittablePrepare2D*>(&solver);
 
 		for (int k = 1; k < (int)images.size(); k++)
 		{
@@ -95,7 +107,15 @@ namespace opencorr
 			}
 
 			solver.setImages(images[ref_idx], images[k]);
-			solver.prepare();
+			if (splittable != nullptr && ref_idx == last_prepared_ref_idx)
+			{
+				splittable->prepareTar();
+			}
+			else
+			{
+				solver.prepare();
+			}
+			last_prepared_ref_idx = ref_idx;
 			solver.compute(working);
 
 			FrameStatus status;

@@ -72,6 +72,31 @@ namespace
 			poi->result.zncc = index < (int)per_poi_zncc.size() ? per_poi_zncc[index] : 0.9f;
 		}
 	};
+
+	//counts calls to distinguish "full prepare()" from "target-only prepareTar()" --
+	//used below to confirm SequenceTracker2D actually skips the reference-side prepare
+	//when the reference hasn't changed, rather than just compiling against the new
+	//SplittablePrepare2D interface without ever taking the cheaper path
+	class CountingSplittableStubSolver : public DIC, public SplittablePrepare2D
+	{
+	public:
+		int prepare_calls = 0, prepare_ref_calls = 0, prepare_tar_calls = 0;
+
+		void prepare() override { prepare_calls++; }
+		void prepareRef() override { prepare_ref_calls++; }
+		void prepareTar() override { prepare_tar_calls++; }
+
+		void compute(POI2D* poi) override
+		{
+			poi->deformation.u += 1.f;
+			poi->result.zncc = 0.9f;
+		}
+
+		void compute(std::vector<POI2D>& poi_queue) override
+		{
+			for (auto& poi : poi_queue) compute(&poi);
+		}
+	};
 }
 
 int main()
@@ -233,6 +258,28 @@ int main()
 		cout << "  " << (percentile_ok ? "PASS" : "FAIL")
 			<< ": majority correlation failures trigger a reference update despite the few high-ZNCC survivors" << endl;
 		if (!percentile_ok) failures++;
+	}
+
+	//--- regression: a solver implementing SplittablePrepare2D gets only prepareTar()
+	//on frames where the reference didn't change, not a redundant full prepare() ---
+	cout << endl << "=== Regression: reference-side prepare is skipped when the reference doesn't change ===" << endl;
+	{
+		vector<Image2D> four_frames = { images[0], images[1], images[2], images[3] };
+		vector<POI2D> poi_split = { POI2D(Point2D(100.f, 100.f)) };
+		CountingSplittableStubSolver stub_solver;
+
+		SequenceTracker2D tracker_fixed;
+		tracker_fixed.setReferenceUpdateEnabled(false); //default NO_UPDATE policy
+		tracker_fixed.compute(four_frames, poi_split, stub_solver);
+
+		cout << "  fixed reference, 3 tracked frames: prepare()=" << stub_solver.prepare_calls
+			<< " prepareRef()=" << stub_solver.prepare_ref_calls << " prepareTar()=" << stub_solver.prepare_tar_calls << endl;
+		//frame 1 has no prior reference (always a full prepare()); frames 2 and 3 keep the
+		//same reference, so should only need prepareTar()
+		bool fixed_ref_ok = stub_solver.prepare_calls == 1 && stub_solver.prepare_ref_calls == 0 && stub_solver.prepare_tar_calls == 2;
+		cout << "  " << (fixed_ref_ok ? "PASS" : "FAIL")
+			<< ": only frame 1 gets a full prepare(); frames 2-3 get prepareTar() only" << endl;
+		if (!fixed_ref_ok) failures++;
 	}
 
 	cout << endl << (failures == 0 ? "ALL CHECKS PASSED" : "SOME CHECKS FAILED") << " (" << failures << " failure(s))" << endl;
