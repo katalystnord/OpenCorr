@@ -20,7 +20,7 @@
 
 namespace opencorr
 {
-	NearestNeighbor* CrackResidual2D::getInstance(int tid)
+	std::unique_ptr<NearestNeighbor>& CrackResidual2D::getInstance(int tid)
 	{
 		if (tid >= (int)instance_pool.size())
 		{
@@ -33,9 +33,11 @@ namespace opencorr
 	CrackResidual2D::CrackResidual2D(float search_radius, int neighbor_number_min, int thread_number)
 		: search_radius(search_radius), neighbor_number_min(neighbor_number_min), thread_number(thread_number)
 	{
+		instance_pool.resize(thread_number);
+#pragma omp parallel for
 		for (int i = 0; i < thread_number; i++)
 		{
-			instance_pool.push_back(new NearestNeighbor());
+			instance_pool[i] = std::make_unique<NearestNeighbor>();
 		}
 	}
 
@@ -43,9 +45,9 @@ namespace opencorr
 	{
 		for (auto& instance : instance_pool)
 		{
-			delete instance;
+			instance.reset();
 		}
-		std::vector<NearestNeighbor*>().swap(instance_pool);
+		std::vector<std::unique_ptr<NearestNeighbor>>().swap(instance_pool);
 	}
 
 	void CrackResidual2D::prepare(std::vector<POI2D>& poi_queue)
@@ -94,7 +96,7 @@ namespace opencorr
 #pragma omp parallel for
 		for (int y = min_y; y <= max_y; y++)
 		{
-			NearestNeighbor* neighbor_search = getInstance(omp_get_thread_num());
+			std::unique_ptr<NearestNeighbor>& neighbor_search = getInstance(omp_get_thread_num());
 
 			for (int x = min_x; x <= max_x; x++)
 			{

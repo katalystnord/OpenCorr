@@ -17,6 +17,8 @@
 #ifndef _CRACK_RESIDUAL_H_
 #define _CRACK_RESIDUAL_H_
 
+#include <memory>
+
 #include "oc_cubic_bspline.h"
 #include "oc_nearest_neighbor.h"
 #include "oc_shape.h"
@@ -78,8 +80,8 @@ namespace opencorr
 
 		Eigen::MatrixXf residual_map;
 
-		std::vector<NearestNeighbor*> instance_pool;
-		NearestNeighbor* getInstance(int tid);
+		std::vector<std::unique_ptr<NearestNeighbor>> instance_pool;
+		std::unique_ptr<NearestNeighbor>& getInstance(int tid);
 	};
 
 }//namespace opencorr
