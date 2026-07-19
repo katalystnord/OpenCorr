@@ -231,15 +231,24 @@ namespace opencorr
 
 	void FeatureAffine2D::prepare()
 	{
-#pragma omp parallel for
-		for (int i = 0; i < thread_number; i++)
-		{
-			instance_pool[i]->clear();
+		//build the KD-tree once (instance 0), then have every other thread's instance
+		//share that same read-only tree instead of independently rebuilding an identical
+		//one from the same ref_kp -- constructKdTree() is O(n log n) over the same n points
+		//regardless of which instance calls it, so thread_number-1 of those builds were
+		//pure duplicated work. Each instance keeps its own query scratch (query_coor),
+		//so concurrent querying through different instances stays thread-safe.
+		instance_pool[0]->clear();
+		instance_pool[0]->assignPoints(ref_kp);
+		instance_pool[0]->setSearchRadius(neighbor_search_radius);
+		instance_pool[0]->setSearchK(neighbor_number_min);
+		instance_pool[0]->constructKdTree();
 
-			instance_pool[i]->assignPoints(ref_kp);
+#pragma omp parallel for
+		for (int i = 1; i < thread_number; i++)
+		{
 			instance_pool[i]->setSearchRadius(neighbor_search_radius);
 			instance_pool[i]->setSearchK(neighbor_number_min);
-			instance_pool[i]->constructKdTree();
+			instance_pool[i]->shareTreeFrom(*instance_pool[0]);
 		}
 	}
 
@@ -475,15 +484,19 @@ namespace opencorr
 
 	void FeatureAffine3D::prepare()
 	{
-#pragma omp parallel for
-		for (int i = 0; i < thread_number; i++)
-		{
-			instance_pool[i]->clear();
+		//see FeatureAffine2D::prepare() -- same reasoning: build once, share the rest
+		instance_pool[0]->clear();
+		instance_pool[0]->assignPoints(ref_kp);
+		instance_pool[0]->setSearchRadius(neighbor_search_radius);
+		instance_pool[0]->setSearchK(neighbor_number_min);
+		instance_pool[0]->constructKdTree();
 
-			instance_pool[i]->assignPoints(ref_kp);
+#pragma omp parallel for
+		for (int i = 1; i < thread_number; i++)
+		{
 			instance_pool[i]->setSearchRadius(neighbor_search_radius);
 			instance_pool[i]->setSearchK(neighbor_number_min);
-			instance_pool[i]->constructKdTree();
+			instance_pool[i]->shareTreeFrom(*instance_pool[0]);
 		}
 	}
 

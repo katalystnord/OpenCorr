@@ -20,63 +20,57 @@ namespace opencorr
 {
 	NearestNeighbor::NearestNeighbor() {}
 
-	NearestNeighbor::~NearestNeighbor()
-	{
-		if (kdt_index != nullptr)
-		{
-			delete kdt_index;
-		}
-	}
+	NearestNeighbor::~NearestNeighbor() {}
 
 	void NearestNeighbor::assignPoints(std::vector<Point2D>& point_queue)
 	{
 		auto queue_length = point_queue.size();
-		point_cloud.pts.resize(queue_length);
+		tree->point_cloud.pts.resize(queue_length);
 #pragma omp parallel for
 		for (int i = 0; i < queue_length; i++)
 		{
-			point_cloud.pts[i].x = point_queue[i].x;
-			point_cloud.pts[i].y = point_queue[i].y;
-			point_cloud.pts[i].z = 0.f;
+			tree->point_cloud.pts[i].x = point_queue[i].x;
+			tree->point_cloud.pts[i].y = point_queue[i].y;
+			tree->point_cloud.pts[i].z = 0.f;
 		}
 	}
 
 	void NearestNeighbor::assignPoints(std::vector<POI2D>& poi_queue)
 	{
 		auto queue_length = poi_queue.size();
-		point_cloud.pts.resize(queue_length);
+		tree->point_cloud.pts.resize(queue_length);
 #pragma omp parallel for
 		for (int i = 0; i < queue_length; i++)
 		{
-			point_cloud.pts[i].x = poi_queue[i].x;
-			point_cloud.pts[i].y = poi_queue[i].y;
-			point_cloud.pts[i].z = 0.f;
+			tree->point_cloud.pts[i].x = poi_queue[i].x;
+			tree->point_cloud.pts[i].y = poi_queue[i].y;
+			tree->point_cloud.pts[i].z = 0.f;
 		}
 	}
 
 	void NearestNeighbor::assignPoints(std::vector<Point3D>& point_queue)
 	{
 		auto queue_length = point_queue.size();
-		point_cloud.pts.resize(queue_length);
+		tree->point_cloud.pts.resize(queue_length);
 #pragma omp parallel for
 		for (int i = 0; i < queue_length; i++)
 		{
-			point_cloud.pts[i].x = point_queue[i].x;
-			point_cloud.pts[i].y = point_queue[i].y;
-			point_cloud.pts[i].z = point_queue[i].z;
+			tree->point_cloud.pts[i].x = point_queue[i].x;
+			tree->point_cloud.pts[i].y = point_queue[i].y;
+			tree->point_cloud.pts[i].z = point_queue[i].z;
 		}
 	}
 
 	void NearestNeighbor::assignPoints(std::vector<POI3D>& poi_queue)
 	{
 		auto queue_length = poi_queue.size();
-		point_cloud.pts.resize(queue_length);
+		tree->point_cloud.pts.resize(queue_length);
 #pragma omp parallel for
 		for (int i = 0; i < queue_length; i++)
 		{
-			point_cloud.pts[i].x = poi_queue[i].x;
-			point_cloud.pts[i].y = poi_queue[i].y;
-			point_cloud.pts[i].z = poi_queue[i].z;
+			tree->point_cloud.pts[i].x = poi_queue[i].x;
+			tree->point_cloud.pts[i].y = poi_queue[i].y;
+			tree->point_cloud.pts[i].z = poi_queue[i].z;
 		}
 	}
 
@@ -102,23 +96,22 @@ namespace opencorr
 
 	void NearestNeighbor::constructKdTree()
 	{
-		// construct a kd-tree index
-		using kdTree = nanoflann::KDTreeSingleIndexAdaptor<nanoflann::L2_Simple_Adaptor<float, PointCloud>, PointCloud, 3>;
-
-		kdt_index = new kdTree(3 /*dim*/, point_cloud, { 10 /* max leaf */ });
+		delete tree->kdt_index;
+		tree->kdt_index = new KdTree(3 /*dim*/, tree->point_cloud, { 10 /* max leaf */ });
 	}
 
 	void NearestNeighbor::clear()
 	{
-		if (!point_cloud.pts.empty())
-		{
-			std::vector<Point>().swap(point_cloud.pts);
-		}
-		if (kdt_index != nullptr)
-		{
-			delete kdt_index;
-			kdt_index = nullptr;
-		}
+		//a fresh KdTreeData, not an in-place reset: if this instance previously shared
+		//another instance's tree (shareTreeFrom()), resetting the shared_ptr here leaves
+		//that other instance (and its tree) completely untouched, rather than clearing
+		//data still in use elsewhere
+		tree = std::make_shared<KdTreeData>();
+	}
+
+	void NearestNeighbor::shareTreeFrom(const NearestNeighbor& source)
+	{
+		tree = source.tree;
 	}
 
 	int NearestNeighbor::radiusSearch(Point3D query_point, std::vector<nanoflann::ResultItem<uint32_t, float>>& matches)
@@ -132,7 +125,7 @@ namespace opencorr
 		nanoflann::SearchParameters params;
 		params.sorted = false;
 
-		int num_matches = (int)kdt_index->radiusSearch(&query_coor[0], squared_radius, matches, params);
+		int num_matches = (int)tree->kdt_index->radiusSearch(&query_coor[0], squared_radius, matches, params);
 
 		return num_matches;
 	}
@@ -148,7 +141,7 @@ namespace opencorr
 		nanoflann::SearchParameters params;
 		params.sorted = false;
 
-		int num_matches = (int)kdt_index->radiusSearch(&query_coor[0], squared_radius, matches, params);
+		int num_matches = (int)tree->kdt_index->radiusSearch(&query_coor[0], squared_radius, matches, params);
 
 		return num_matches;
 	}
@@ -162,7 +155,7 @@ namespace opencorr
 		query_coor[1] = query_point.y;
 		query_coor[2] = query_point.z;
 
-		int num_matches = (int)kdt_index->knnSearch(&query_coor[0], search_k, &k_neighbor_idx[0], &k_squared_distance[0]);
+		int num_matches = (int)tree->kdt_index->knnSearch(&query_coor[0], search_k, &k_neighbor_idx[0], &k_squared_distance[0]);
 
 		//in case of insufficient keypoints in the tree than requested
 		k_neighbor_idx.resize(num_matches);
@@ -180,7 +173,7 @@ namespace opencorr
 		query_coor[1] = query_point.y;
 		query_coor[2] = query_point.z;
 
-		int num_matches = (int)kdt_index->knnSearch(&query_coor[0], search_k, &k_neighbor_idx[0], &k_squared_distance[0]);
+		int num_matches = (int)tree->kdt_index->knnSearch(&query_coor[0], search_k, &k_neighbor_idx[0], &k_squared_distance[0]);
 
 		//in case of insufficient keypoints in the tree than requested
 		k_neighbor_idx.resize(num_matches);
