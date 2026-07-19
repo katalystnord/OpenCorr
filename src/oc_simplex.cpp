@@ -44,6 +44,15 @@ namespace opencorr
 		const int mpts = num_dofs + 1;
 		const float tiny = 1e-10f;
 
+		//how many CONSECUTIVE iterations rtol must fail to move by more than `tiny`
+		//before treating the simplex as genuinely stalled (see stagnant_run below) --
+		//distinguishes real floating-point-precision stagnation (which persists for
+		//many iterations in a row once the simplex has actually collapsed) from a
+		//single coincidental near-match between two consecutive rtol samples, which
+		//can happen at any threshold purely by chance while the search is still
+		//legitimately making progress
+		const int stagnation_patience = 10;
+
 		//initial simplex: the starting guess, plus one vertex per dimension offset by that
 		//dimension's delta
 		std::vector<std::vector<float>> points(mpts, variables);
@@ -69,6 +78,7 @@ namespace opencorr
 
 		std::vector<float> ptry(num_dofs);
 		float old_rtol = 0.f;
+		int stagnant_run = 0;
 		int iteration = 0;
 		bool converged = false;
 
@@ -92,10 +102,10 @@ namespace opencorr
 			}
 
 			float rtol = 2.f * std::fabs(cost[ihi] - cost[ilo]) / (std::fabs(cost[ihi]) + std::fabs(cost[ilo]) + tiny);
-			bool stagnant = std::fabs(rtol - old_rtol) < tiny;
+			stagnant_run = std::fabs(rtol - old_rtol) < tiny ? stagnant_run + 1 : 0;
 			old_rtol = rtol;
 
-			if (rtol < tolerance || stagnant)
+			if (rtol < tolerance || stagnant_run >= stagnation_patience)
 			{
 				std::swap(cost[0], cost[ilo]);
 				std::swap(points[0], points[ilo]);
