@@ -12,6 +12,12 @@
  * More information about OpenCorr can be found at https://www.opencorr.org/
  */
 
+/*
+ * Portions of this file are ported from DICe (dicengine/dice), BSD-3-Clause.
+ * See THIRD-PARTY-LICENSES.md for the required copyright notice, list of
+ * conditions, and disclaimer.
+ */
+
 #include <cmath>
 
 #include "oc_shape.h"

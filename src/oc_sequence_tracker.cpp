@@ -12,6 +12,13 @@
  * More information about OpenCorr can be found at https://www.opencorr.org/
  */
 
+/*
+ * Portions of this file are ported from DICe (dicengine/dice) and from
+ * ncorr_2D_cpp (justinblaber/ncorr_2D_cpp), both BSD-3-Clause. See
+ * THIRD-PARTY-LICENSES.md for the required copyright notices, lists of
+ * conditions, and disclaimers.
+ */
+
 #include <algorithm>
 #include <cmath>
 

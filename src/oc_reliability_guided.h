@@ -12,6 +12,12 @@
  * More information about OpenCorr can be found at https://www.opencorr.org/
  */
 
+/*
+ * Portions of this file are ported from ncorr_2D_cpp
+ * (justinblaber/ncorr_2D_cpp), BSD-3-Clause. See THIRD-PARTY-LICENSES.md
+ * for the required copyright notice, list of conditions, and disclaimer.
+ */
+
 #pragma once
 
 #ifndef _RELIABILITY_GUIDED_H_
