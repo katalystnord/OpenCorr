@@ -95,8 +95,17 @@ namespace opencorr
 				if (nr < 0 || nr >= poi_number_y || nc < 0 || nc >= poi_number_x) continue;
 
 				int nidx = nr * poi_number_x + nc;
+				//visited[nidx] is claimed only on a SUCCESSFUL solve (below), not here on
+				//mere discovery: this cell can have up to 4 grid neighbors, popped from the
+				//queue in descending-ZNCC order as each becomes solved -- but "becomes
+				//solved" and "gets popped" happen at different times, so a lower-quality
+				//neighbor can easily be the first to actually reach this cell (e.g. it sits
+				//one hop from a seed, while a much better neighbor a few hops further out
+				//hasn't even been discovered yet). Claiming the cell here, before knowing
+				//whether that first attempt even succeeds, would permanently strand a
+				//solvable POI on a failed marginal guess, with no chance for a better
+				//neighbor discovered later to ever get a turn at it.
 				if (visited[nidx]) continue;
-				visited[nidx] = true;
 
 				POI2D& neighbor = poi_queue[nidx];
 
@@ -130,14 +139,19 @@ namespace opencorr
 
 				if (neighbor.result.zncc > zncc_threshold && jump < delta_disp_tolerance)
 				{
+					//only NOW claim the cell -- a later-discovered, better neighbor is no
+					//longer in the running for it once it has an accepted solution of its own
+					visited[nidx] = true;
 					queue.push({ nidx, neighbor.result.zncc });
 					accepted++;
 				}
 				else if (!isFailureStatus(neighbor.result.zncc))
 				{
-					//only stamp STATUS_RELIABILITY_GUIDED_REJECTED when the solver DIDN'T already
-					//report one of its own named failure codes (isFailureStatus(), oc_dic.h) --
-					//this is what actually distinguishes "the correlation itself failed" from "it
+					//NOT claimed: a different, not-yet-discovered neighbor may still reach
+					//this cell later and succeed where this attempt didn't. This stamp is
+					//provisional -- overwritten by a later successful attempt, or left as the
+					//final state if every neighbor that ever reaches this cell fails, which is
+					//what actually distinguishes "the correlation itself failed" from "it
 					//succeeded (however poorly) but propagation rejected it," which call for
 					//different tuning responses
 					neighbor.result.zncc = (float)STATUS_RELIABILITY_GUIDED_REJECTED;

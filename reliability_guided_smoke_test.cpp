@@ -16,6 +16,43 @@
 using namespace opencorr;
 using namespace std;
 
+namespace
+{
+	//deterministic stand-in for a real solver, used below to force the exact race the
+	//"visited claimed before solving" bug needed: succeeds (converging to the true,
+	//exactly-linear field u_true(x) = 0.5*x, and handing forward a correspondingly
+	//correct gradient) only if the incoming Taylor-extrapolated guess is already close
+	//to truth, and otherwise reports a low ZNCC without moving from the guess -- a
+	//reasonable stand-in for "a bad initial guess doesn't converge."
+	class LinearFieldStubSolver : public DIC
+	{
+	public:
+		void prepare() override {}
+
+		void compute(POI2D* poi) override
+		{
+			float true_u = 0.5f * poi->x;
+			float error = std::fabs(poi->deformation.u - true_u);
+			if (error < 0.01f)
+			{
+				poi->deformation.u = true_u;
+				poi->deformation.ux = 0.5f; //hands the correct gradient forward on success
+				poi->result.zncc = 0.9f;
+			}
+			else
+			{
+				//didn't converge -- left at the (wrong) guess, low quality
+				poi->result.zncc = 0.3f;
+			}
+		}
+
+		void compute(std::vector<POI2D>& poi_queue) override
+		{
+			for (auto& poi : poi_queue) compute(&poi);
+		}
+	};
+}
+
 int main()
 {
 	int failures = 0;
@@ -113,6 +150,46 @@ int main()
 	cout << "  " << (agreement_ok ? "PASS" : "FAIL") << ": flood-filled displacements match the independently-solved ground truth" << endl;
 	if (!coverage_ok) failures++;
 	if (!agreement_ok) failures++;
+
+	//--- regression: a POI reached first by a marginal neighbor must still be solvable
+	//by a better neighbor discovered later, not permanently stranded ---
+	cout << endl << "=== Regression: a failed attempt from one neighbor doesn't strand the cell for a better one ===" << endl;
+	{
+		//1D row of 4 POIs at x = 0,1,2,3 (idx0..idx3). idx0 ("A") is a seed with high
+		//ZNCC but a deliberately WRONG gradient (ux=-0.5, true is +0.5) -- realistic in
+		//that a solver's own converged ZNCC doesn't guarantee its local gradient
+		//estimate is equally reliable. idx3 ("B0") is a seed with lower ZNCC but the
+		//CORRECT gradient. idx1 ("C") is adjacent to both A directly, and to B0's own
+		//neighbor idx2 ("B") -- reachable from either side.
+		//
+		//Pop order is strictly ZNCC-descending, so A (higher ZNCC) is tried before B0
+		//gets any chance to reach C: A's wrong gradient sends the stub a bad guess for
+		//C, which fails. B0 then succeeds at B, and B then reaches C with a correct
+		//guess. Whether C ends up correctly solved depends entirely on whether A's
+		//earlier failed attempt was allowed to permanently claim it.
+		vector<POI2D> chain;
+		for (int x = 0; x < 4; x++) chain.push_back(POI2D(Point2D((float)x, 0.f)));
+
+		chain[0].deformation.u = 0.f; //true value at x=0 (coincidentally correct)
+		chain[0].deformation.ux = -0.5f; //deliberately wrong gradient
+		chain[0].result.zncc = 0.99f;
+
+		chain[3].deformation.u = 1.5f; //true value at x=3
+		chain[3].deformation.ux = 0.5f; //correct gradient
+		chain[3].result.zncc = 0.7f;
+
+		LinearFieldStubSolver stub;
+		ReliabilityGuided2D rg_race(4, 1);
+		rg_race.setZnccThreshold(0.5f);
+		rg_race.setDeltaDispTolerance(1000.f); //not the mechanism under test here
+		rg_race.compute(chain, { 0, 3 }, stub);
+
+		cout << "  C (idx1): u=" << chain[1].deformation.u << " zncc=" << chain[1].result.zncc << endl;
+		bool race_ok = chain[1].result.zncc == 0.9f && std::fabs(chain[1].deformation.u - 0.5f) < 1e-4f;
+		cout << "  " << (race_ok ? "PASS" : "FAIL")
+			<< ": a later, better neighbor (via B0->B) still solves C after A's earlier attempt failed" << endl;
+		if (!race_ok) failures++;
+	}
 
 	cout << endl << (failures == 0 ? "ALL CHECKS PASSED" : "SOME CHECKS FAILED") << " (" << failures << " failure(s))" << endl;
 	return failures == 0 ? 0 : 1;
