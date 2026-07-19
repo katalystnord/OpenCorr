@@ -20,6 +20,128 @@
 
 namespace opencorr
 {
+	namespace
+	{
+		//number of affine-matrix columns (dim + 1, for the translation/homogeneous term) --
+		//also doubles as the minimum consensus-set size needed to solve for the affine
+		//matrix, matching FeatureAffine2D/3D's own "essential condition to solve the
+		//equation" checks (3 for 2D, 4 for 3D)
+		template<typename PointT> struct AffineDim;
+		template<> struct AffineDim<Point2D> { static const int value = 3; };
+		template<> struct AffineDim<Point3D> { static const int value = 4; };
+
+		inline void fillAffineRow(Eigen::MatrixXf& m, int row, const Point2D& p)
+		{
+			m(row, 0) = p.x;
+			m(row, 1) = p.y;
+			m(row, 2) = 1.f;
+		}
+
+		inline void fillAffineRow(Eigen::MatrixXf& m, int row, const Point3D& p)
+		{
+			m(row, 0) = p.x;
+			m(row, 1) = p.y;
+			m(row, 2) = p.z;
+			m(row, 3) = 1.f;
+		}
+
+		inline Point2D applyAffine(const Eigen::MatrixXf& affine, const Point2D& p)
+		{
+			return Point2D(
+				p.x * affine(0, 0) + p.y * affine(1, 0) + affine(2, 0),
+				p.x * affine(0, 1) + p.y * affine(1, 1) + affine(2, 1));
+		}
+
+		inline Point3D applyAffine(const Eigen::MatrixXf& affine, const Point3D& p)
+		{
+			return Point3D(
+				p.x * affine(0, 0) + p.y * affine(1, 0) + p.z * affine(2, 0) + affine(3, 0),
+				p.x * affine(0, 1) + p.y * affine(1, 1) + p.z * affine(2, 1) + affine(3, 1),
+				p.x * affine(0, 2) + p.y * affine(1, 2) + p.z * affine(2, 2) + affine(3, 2));
+		}
+
+		//RANSAC-fit an affine transform mapping ref_candidates -> tar_candidates (both
+		//already POI-centered local coordinates), shared by FeatureAffine2D and
+		//FeatureAffine3D -- previously duplicated near-verbatim between the two (with the
+		//copy-paste wy/wz bug once caught in the 3D copy). Same structure as the original:
+		//repeatedly fit an affine transform from a random minimal sample, keep the largest
+		//inlier consensus set seen across trials, then re-fit using that best set. Returns
+		//false (degenerate) if the final consensus set is too small to solve the equation.
+		template<typename PointT>
+		bool ransacAffineFit(const std::vector<PointT>& ref_candidates, const std::vector<PointT>& tar_candidates,
+			const RansacConfig& ransac_config, int neighbor_number_min, std::mt19937_64& gen64,
+			Eigen::MatrixXf& affine_matrix, int& trial_counter, int& max_set_size)
+		{
+			const int dim1 = AffineDim<PointT>::value;
+			int neighbor_num = (int)ref_candidates.size();
+
+			std::vector<int> candidate_index(neighbor_num);
+			std::iota(candidate_index.begin(), candidate_index.end(), 0); //ascending order to start
+
+			trial_counter = 0;
+			float location_mean_error;
+			std::vector<int> max_set;
+
+			do
+			{
+				//randomly select samples
+				std::shuffle(candidate_index.begin(), candidate_index.end(), gen64);
+
+				Eigen::MatrixXf ref_neighbors(ransac_config.sample_mumber, dim1);
+				Eigen::MatrixXf tar_neighbors(ransac_config.sample_mumber, dim1);
+				for (int j = 0; j < ransac_config.sample_mumber; j++)
+				{
+					fillAffineRow(ref_neighbors, j, ref_candidates[candidate_index[j]]);
+					fillAffineRow(tar_neighbors, j, tar_candidates[candidate_index[j]]);
+				}
+				//ref * affine = tar, thus affine is the permutation of affine matrix in the paper, where Ax=x'
+				Eigen::MatrixXf affine_trial = ref_neighbors.colPivHouseholderQr().solve(tar_neighbors);
+
+				//consensus
+				std::vector<int> trial_set;
+				location_mean_error = 0.f;
+				for (int j = 0; j < neighbor_num; j++)
+				{
+					PointT predicted = applyAffine(affine_trial, ref_candidates[candidate_index[j]]);
+					float estimation_error = (predicted - tar_candidates[candidate_index[j]]).vectorNorm();
+					//check if the error is acceptable, keep the "good" points
+					if (estimation_error < ransac_config.error_threshold)
+					{
+						trial_set.push_back(candidate_index[j]);
+						location_mean_error += estimation_error;
+					}
+				}
+				//replace max_set with current trial_set if the latter is larger
+				if (trial_set.size() > max_set.size())
+				{
+					max_set.assign(trial_set.begin(), trial_set.end());
+				}
+
+				trial_counter++;
+				location_mean_error /= trial_set.size();
+			} while (trial_counter < ransac_config.trial_number &&
+				((int)max_set.size() < neighbor_number_min || location_mean_error > ransac_config.error_threshold / neighbor_number_min));
+
+			//calculate affine matrix according to the results of consensus
+			max_set_size = (int)max_set.size();
+			if (max_set_size < dim1) //essential condition to solve the equation
+			{
+				return false;
+			}
+
+			Eigen::MatrixXf ref_neighbors(max_set_size, dim1);
+			Eigen::MatrixXf tar_neighbors(max_set_size, dim1);
+			for (int i = 0; i < max_set_size; i++)
+			{
+				fillAffineRow(ref_neighbors, i, ref_candidates[max_set[i]]);
+				fillAffineRow(tar_neighbors, i, tar_candidates[max_set[i]]);
+			}
+			//the method of least squares
+			affine_matrix = ref_neighbors.colPivHouseholderQr().solve(tar_neighbors);
+			return true;
+		}
+	}
+
 	//2D implementation
 	std::unique_ptr<NearestNeighbor>& FeatureAffine2D::getInstance(int tid)
 	{
@@ -47,6 +169,12 @@ namespace opencorr
 		subset_radius_min = 10;
 
 		instance_pool.resize(thread_number);
+		rng_pool.reserve(thread_number);
+		std::random_device rd;
+		for (int i = 0; i < thread_number; i++)
+		{
+			rng_pool.emplace_back(rd());
+		}
 #pragma omp parallel for
 		for (int i = 0; i < thread_number; i++)
 		{
@@ -117,8 +245,9 @@ namespace opencorr
 
 	void FeatureAffine2D::compute(POI2D* poi)
 	{
-		//set instance w.r.t. thread id 
-		std::unique_ptr<NearestNeighbor>& neighbor_search = getInstance(omp_get_thread_num());
+		//set instance w.r.t. thread id
+		int tid = omp_get_thread_num();
+		std::unique_ptr<NearestNeighbor>& neighbor_search = getInstance(tid);
 
 		Point3D current_point(poi->x, poi->y, 0.f);
 		std::vector<Point2D> ref_candidates, tar_candidates;
@@ -229,106 +358,30 @@ namespace opencorr
 			tar_candidates[i] = tar_candidates[i] - (Point2D)*poi;
 		}
 
-		//RANSAC procedure
-		std::vector<int> candidate_index(neighbor_num);
-		std::iota(candidate_index.begin(), candidate_index.end(), 0); //initialize the candidate_index with the integers in ascending order
+		Eigen::MatrixXf affine_matrix;
+		int trial_counter = 0, max_set_size = 0;
+		bool solved = ransacAffineFit(ref_candidates, tar_candidates, ransac_config, neighbor_number_min,
+			rng_pool[tid], affine_matrix, trial_counter, max_set_size);
 
-		int trial_counter = 0; //trial counter
-		float location_mean_error;
-		std::vector<int> max_set;
-
-		//random number generator
-		std::random_device rd;
-		std::mt19937_64 gen64(rd());
-		do
-		{
-			//randomly select samples
-			std::shuffle(candidate_index.begin(), candidate_index.end(), gen64);
-
-			Eigen::MatrixXf ref_neighbors(ransac_config.sample_mumber, 3);
-			Eigen::MatrixXf tar_neighbors(ransac_config.sample_mumber, 3);
-			for (int j = 0; j < ransac_config.sample_mumber; j++)
-			{
-				ref_neighbors(j, 0) = ref_candidates[candidate_index[j]].x;
-				ref_neighbors(j, 1) = ref_candidates[candidate_index[j]].y;
-				ref_neighbors(j, 2) = 1.f;
-				tar_neighbors(j, 0) = tar_candidates[candidate_index[j]].x;
-				tar_neighbors(j, 1) = tar_candidates[candidate_index[j]].y;
-				tar_neighbors(j, 2) = 1.f;
-			}
-			//ref * affine = tar, thus affine is the permutation of affine matrix in the paper, where Ax=x'
-			Eigen::Matrix3f affine_matrix = ref_neighbors.colPivHouseholderQr().solve(tar_neighbors);
-
-			//concensus
-			std::vector<int> trial_set;
-			location_mean_error = 0;
-			float delta_x, delta_y, estimation_error;
-			for (int j = 0; j < neighbor_num; j++)
-			{
-				delta_x = (float)(ref_candidates[candidate_index[j]].x * affine_matrix(0, 0)
-					+ ref_candidates[candidate_index[j]].y * affine_matrix(1, 0) + affine_matrix(2, 0))
-					- tar_candidates[candidate_index[j]].x;
-				delta_y = (float)(ref_candidates[candidate_index[j]].x * affine_matrix(0, 1)
-					+ ref_candidates[candidate_index[j]].y * affine_matrix(1, 1) + affine_matrix(2, 1))
-					- tar_candidates[candidate_index[j]].y;
-				Point2D cur_point(delta_x, delta_y);
-				estimation_error = cur_point.vectorNorm();
-				//check if the error is acceptable, keep the "good" points
-				if (estimation_error < ransac_config.error_threshold)
-				{
-					trial_set.push_back(candidate_index[j]);
-					location_mean_error += estimation_error;
-				}
-			}
-			//replace max_set with current trial_set if the latter is larger
-			if (trial_set.size() > max_set.size())
-			{
-				max_set.assign(trial_set.begin(), trial_set.end());
-			}
-
-			trial_counter++;
-			location_mean_error /= trial_set.size();
-		} while (trial_counter < ransac_config.trial_number &&
-			(max_set.size() < neighbor_number_min || location_mean_error > ransac_config.error_threshold / neighbor_number_min));
-
-		//calculate affine matrix according to the results of concensus
-		int max_set_size = (int)max_set.size();
-		if (max_set_size < 3) //essential condition to solve the equation
+		if (!solved)
 		{
 			poi->result.zncc = (float)STATUS_DEGENERATE_INPUT;
 			return;
 		}
-		else
-		{
-			Eigen::MatrixXf ref_neighbors(max_set_size, 3);
-			Eigen::MatrixXf tar_neighbors(max_set_size, 3);
 
-			for (int i = 0; i < max_set_size; i++)
-			{
-				ref_neighbors(i, 0) = ref_candidates[max_set[i]].x;
-				ref_neighbors(i, 1) = ref_candidates[max_set[i]].y;
-				ref_neighbors(i, 2) = 1.f;
-				tar_neighbors(i, 0) = tar_candidates[max_set[i]].x;
-				tar_neighbors(i, 1) = tar_candidates[max_set[i]].y;
-				tar_neighbors(i, 2) = 1.f;
-			}
-			//the method of least squares
-			Eigen::Matrix3f affine_matrix = ref_neighbors.colPivHouseholderQr().solve(tar_neighbors);
+		//calculate the 1st order deformation according to the equivalence between affine matrix and the 1st order shape function
+		poi->deformation.u = affine_matrix(2, 0);
+		poi->deformation.ux = affine_matrix(0, 0) - 1.f;
+		poi->deformation.uy = affine_matrix(1, 0);
+		poi->deformation.v = affine_matrix(2, 1);
+		poi->deformation.vx = affine_matrix(0, 1);
+		poi->deformation.vy = affine_matrix(1, 1) - 1.f;
 
-			//calculate the 1st order deformation according to the equivalence between affine matrix and the 1st order shape function
-			poi->deformation.u = affine_matrix(2, 0);
-			poi->deformation.ux = affine_matrix(0, 0) - 1.f;
-			poi->deformation.uy = affine_matrix(1, 0);
-			poi->deformation.v = affine_matrix(2, 1);
-			poi->deformation.vx = affine_matrix(0, 1);
-			poi->deformation.vy = affine_matrix(1, 1) - 1.f;
+		//store results of RANSAC procedure
+		poi->result.iteration = (float)trial_counter;
+		poi->result.feature = (float)max_set_size;
 
-			//store results of RANSAC procedure
-			poi->result.iteration = (float)trial_counter;
-			poi->result.feature = (float)max_set_size;
-
-			poi->result.zncc = 0.f;
-		}
+		poi->result.zncc = 0.f;
 	}
 
 	void FeatureAffine2D::compute(std::vector<POI2D>& poi_queue)
@@ -366,6 +419,12 @@ namespace opencorr
 		this->thread_number = thread_number;
 
 		instance_pool.resize(thread_number);
+		rng_pool.reserve(thread_number);
+		std::random_device rd;
+		for (int i = 0; i < thread_number; i++)
+		{
+			rng_pool.emplace_back(rd());
+		}
 #pragma omp parallel for
 		for (int i = 0; i < thread_number; i++)
 		{
@@ -430,8 +489,9 @@ namespace opencorr
 
 	void FeatureAffine3D::compute(POI3D* poi)
 	{
-		//set instance w.r.t. thread id 
-		std::unique_ptr<NearestNeighbor>& neighbor_search = getInstance(omp_get_thread_num());
+		//set instance w.r.t. thread id
+		int tid = omp_get_thread_num();
+		std::unique_ptr<NearestNeighbor>& neighbor_search = getInstance(tid);
 
 		Point3D current_point(poi->x, poi->y, poi->z);
 		std::vector<Point3D> ref_candidates, tar_candidates;
@@ -445,156 +505,74 @@ namespace opencorr
 			poi->result.zncc = (float)STATUS_INSUFFICIENT_FEATURES;
 			return;
 		}
-		else
+
+		ref_candidates.resize(neighbor_num);
+		tar_candidates.resize(neighbor_num);
+
+		if (neighbor_num >= neighbor_number_min)
 		{
-			ref_candidates.resize(neighbor_num);
-			tar_candidates.resize(neighbor_num);
-
-			if (neighbor_num >= neighbor_number_min)
-			{
-				for (int i = 0; i < neighbor_num; i++)
-				{
-					ref_candidates[i] = ref_kp[current_matches[i].first];
-					tar_candidates[i] = tar_kp[current_matches[i].first];
-				}
-			}
-			else //try KNN search if the obtained neighbor keypoints are not enough
-			{
-				std::vector<Point3D>().swap(ref_candidates);
-				std::vector<Point3D>().swap(tar_candidates);
-
-				std::vector<uint32_t> k_neighbor_idx;
-				std::vector<float> k_squared_distance;
-
-				neighbor_num = neighbor_search->knnSearch(current_point, k_neighbor_idx, k_squared_distance);
-
-				ref_candidates.resize(neighbor_num);
-				tar_candidates.resize(neighbor_num);
-				for (int i = 0; i < neighbor_num; i++)
-				{
-					ref_candidates[i] = ref_kp[k_neighbor_idx[i]];
-					tar_candidates[i] = tar_kp[k_neighbor_idx[i]];
-				}
-			}
-
-			//convert global coordinates to the POI-centered local coordinates
 			for (int i = 0; i < neighbor_num; i++)
 			{
-				ref_candidates[i] = ref_candidates[i] - (Point3D)*poi;
-				tar_candidates[i] = tar_candidates[i] - (Point3D)*poi;
+				ref_candidates[i] = ref_kp[current_matches[i].first];
+				tar_candidates[i] = tar_kp[current_matches[i].first];
 			}
-
-			//RANSAC procedure
-			std::vector<int> candidate_index(neighbor_num);
-			std::iota(candidate_index.begin(), candidate_index.end(), 0); //initialize the candidate_queue with value in ascending order
-
-			int trial_counter = 0; //trial counter
-			float location_mean_error;
-			std::vector<int> max_set;
-
-			//random number generator
-			std::random_device rd;
-			std::mt19937_64 gen64(rd());
-			do
-			{
-				//randomly select samples
-				std::shuffle(candidate_index.begin(), candidate_index.end(), gen64);
-
-				Eigen::MatrixXf tar_neighbors(ransac_config.sample_mumber, 4);
-				Eigen::MatrixXf ref_neighbors(ransac_config.sample_mumber, 4);
-				for (int j = 0; j < ransac_config.sample_mumber; j++) {
-					tar_neighbors(j, 0) = tar_candidates[candidate_index[j]].x;
-					tar_neighbors(j, 1) = tar_candidates[candidate_index[j]].y;
-					tar_neighbors(j, 2) = tar_candidates[candidate_index[j]].z;
-					tar_neighbors(j, 3) = 1.f;
-
-					ref_neighbors(j, 0) = ref_candidates[candidate_index[j]].x;
-					ref_neighbors(j, 1) = ref_candidates[candidate_index[j]].y;
-					ref_neighbors(j, 2) = ref_candidates[candidate_index[j]].z;
-					ref_neighbors(j, 3) = 1.f;
-				}
-				//ref * affine = tar, thus affine is the permutation of affine matrix in the paper, where Ax=x'
-				Eigen::Matrix4f affine_matrix = ref_neighbors.colPivHouseholderQr().solve(tar_neighbors);
-
-				//concensus
-				std::vector<int> trial_set;
-				location_mean_error = 0;
-				float delta_x, delta_y, delta_z, estimation_error;
-				for (int j = 0; j < neighbor_num; j++) {
-					delta_x = (float)(ref_candidates[candidate_index[j]].x * affine_matrix(0, 0)
-						+ ref_candidates[candidate_index[j]].y * affine_matrix(1, 0)
-						+ ref_candidates[candidate_index[j]].z * affine_matrix(2, 0) + affine_matrix(3, 0))
-						- tar_candidates[candidate_index[j]].x;
-					delta_y = (float)(ref_candidates[candidate_index[j]].x * affine_matrix(0, 1)
-						+ ref_candidates[candidate_index[j]].y * affine_matrix(1, 1)
-						+ ref_candidates[candidate_index[j]].z * affine_matrix(2, 1) + affine_matrix(3, 1))
-						- tar_candidates[candidate_index[j]].y;
-					delta_z = (float)(ref_candidates[candidate_index[j]].x * affine_matrix(0, 2)
-						+ ref_candidates[candidate_index[j]].y * affine_matrix(1, 2)
-						+ ref_candidates[candidate_index[j]].z * affine_matrix(2, 2) + affine_matrix(3, 2))
-						- tar_candidates[candidate_index[j]].z;
-					Point3D point(delta_x, delta_y, delta_z);
-					estimation_error = point.vectorNorm();
-					//check if the error is acceptable, keep the "good" points
-					if (estimation_error < ransac_config.error_threshold) {
-						trial_set.push_back(candidate_index[j]);
-						location_mean_error += estimation_error;
-					}
-				}
-				//replace max_set with current trial_set if the latter is larger
-				if (trial_set.size() > max_set.size()) {
-					max_set.assign(trial_set.begin(), trial_set.end());
-				}
-				trial_counter++;
-				location_mean_error /= trial_set.size();
-			} while (trial_counter < ransac_config.trial_number &&
-				(max_set.size() < neighbor_number_min || location_mean_error > ransac_config.error_threshold / neighbor_number_min));
-
-			//calculate affine matrix according to the results of concensus
-			int max_set_size = (int)max_set.size();
-			if (max_set_size < 4) //essential condition to solve the equation
-			{
-				poi->result.zncc = (float)STATUS_DEGENERATE_INPUT;
-				return;
-			}
-
-			Eigen::MatrixXf tar_neighbors(max_set_size, 4);
-			Eigen::MatrixXf ref_neighbors(max_set_size, 4);
-
-			for (int i = 0; i < max_set_size; i++)
-			{
-				ref_neighbors(i, 0) = ref_candidates[max_set[i]].x;
-				ref_neighbors(i, 1) = ref_candidates[max_set[i]].y;
-				ref_neighbors(i, 2) = ref_candidates[max_set[i]].z;
-				ref_neighbors(i, 3) = 1.f;
-				tar_neighbors(i, 0) = tar_candidates[max_set[i]].x;
-				tar_neighbors(i, 1) = tar_candidates[max_set[i]].y;
-				tar_neighbors(i, 2) = tar_candidates[max_set[i]].z;
-				tar_neighbors(i, 3) = 1.f;
-			}
-			//the method of least squares
-			Eigen::Matrix4f affine_matrix = ref_neighbors.colPivHouseholderQr().solve(tar_neighbors);
-
-			//calculate the 1st order deformation according to the equivalence between affine matrix and 1st order shape function
-			poi->deformation.u = affine_matrix(3, 0);
-			poi->deformation.ux = affine_matrix(0, 0) - 1.f;
-			poi->deformation.uy = affine_matrix(1, 0);
-			poi->deformation.uz = affine_matrix(2, 0);
-			poi->deformation.v = affine_matrix(3, 1);
-			poi->deformation.vx = affine_matrix(0, 1);
-			poi->deformation.vy = affine_matrix(1, 1) - 1.f;
-			poi->deformation.vz = affine_matrix(2, 1);
-			poi->deformation.w = affine_matrix(3, 2);
-			poi->deformation.wx = affine_matrix(0, 2);
-			poi->deformation.wy = affine_matrix(1, 2);
-			poi->deformation.wz = affine_matrix(2, 2) - 1.f;
-
-			//store results of RANSAC procedure
-			poi->result.iteration = (float)trial_counter;
-			poi->result.feature = (float)max_set_size;
-
-			poi->result.zncc = 0.f;
 		}
+		else //try KNN search if the obtained neighbor keypoints are not enough
+		{
+			std::vector<Point3D>().swap(ref_candidates);
+			std::vector<Point3D>().swap(tar_candidates);
+
+			std::vector<uint32_t> k_neighbor_idx;
+			std::vector<float> k_squared_distance;
+
+			neighbor_num = neighbor_search->knnSearch(current_point, k_neighbor_idx, k_squared_distance);
+
+			ref_candidates.resize(neighbor_num);
+			tar_candidates.resize(neighbor_num);
+			for (int i = 0; i < neighbor_num; i++)
+			{
+				ref_candidates[i] = ref_kp[k_neighbor_idx[i]];
+				tar_candidates[i] = tar_kp[k_neighbor_idx[i]];
+			}
+		}
+
+		//convert global coordinates to the POI-centered local coordinates
+		for (int i = 0; i < neighbor_num; i++)
+		{
+			ref_candidates[i] = ref_candidates[i] - (Point3D)*poi;
+			tar_candidates[i] = tar_candidates[i] - (Point3D)*poi;
+		}
+
+		Eigen::MatrixXf affine_matrix;
+		int trial_counter = 0, max_set_size = 0;
+		bool solved = ransacAffineFit(ref_candidates, tar_candidates, ransac_config, neighbor_number_min,
+			rng_pool[tid], affine_matrix, trial_counter, max_set_size);
+
+		if (!solved)
+		{
+			poi->result.zncc = (float)STATUS_DEGENERATE_INPUT;
+			return;
+		}
+
+		//calculate the 1st order deformation according to the equivalence between affine matrix and 1st order shape function
+		poi->deformation.u = affine_matrix(3, 0);
+		poi->deformation.ux = affine_matrix(0, 0) - 1.f;
+		poi->deformation.uy = affine_matrix(1, 0);
+		poi->deformation.uz = affine_matrix(2, 0);
+		poi->deformation.v = affine_matrix(3, 1);
+		poi->deformation.vx = affine_matrix(0, 1);
+		poi->deformation.vy = affine_matrix(1, 1) - 1.f;
+		poi->deformation.vz = affine_matrix(2, 1);
+		poi->deformation.w = affine_matrix(3, 2);
+		poi->deformation.wx = affine_matrix(0, 2);
+		poi->deformation.wy = affine_matrix(1, 2);
+		poi->deformation.wz = affine_matrix(2, 2) - 1.f;
+
+		//store results of RANSAC procedure
+		poi->result.iteration = (float)trial_counter;
+		poi->result.feature = (float)max_set_size;
+
+		poi->result.zncc = 0.f;
 	}
 
 	void FeatureAffine3D::compute(std::vector<POI3D>& poi_queue)

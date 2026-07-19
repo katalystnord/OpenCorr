@@ -17,6 +17,8 @@
 #ifndef _FEATURE_AFFINE_H_
 #define _FEATURE_AFFINE_H_
 
+#include <random>
+
 #include "oc_dic.h"
 #include "oc_nearest_neighbor.h"
 
@@ -39,6 +41,11 @@ namespace opencorr
 	private:
 		std::vector<std::unique_ptr<NearestNeighbor>> instance_pool;
 		std::unique_ptr<NearestNeighbor>& getInstance(int tid);
+
+		//one persistent RNG per thread, seeded once at construction -- not freshly
+		//constructed (via std::random_device, a genuinely slow syscall-backed source) on
+		//every single POI's RANSAC trial, ~98,000 times on a full grid
+		std::vector<std::mt19937_64> rng_pool;
 
 	protected:
 		float neighbor_search_radius; //seaching radius for mached keypoints around a POI
@@ -79,6 +86,9 @@ namespace opencorr
 	private:
 		std::vector<std::unique_ptr<NearestNeighbor>> instance_pool;
 		std::unique_ptr<NearestNeighbor>& getInstance(int tid);
+
+		//see FeatureAffine2D::rng_pool above -- same reasoning
+		std::vector<std::mt19937_64> rng_pool;
 
 	protected:
 		float neighbor_search_radius; //seaching radius for mached keypoints around a POI
