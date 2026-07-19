@@ -1,7 +1,7 @@
 /*
  Local build-verification test for SimplexMatch2D, issue #5.
 
- Two checks:
+ Four checks:
  1. Sanity: on real, well-textured images (examples/2d_dic/oht_cfrp_*), does
     SimplexMatch2D converge to displacements matching ICGN2D1's own
     converged solution? (proves the ZNSSD formulation/objective is correct,
@@ -10,9 +10,19 @@
     ground-truth sub-pixel translation, does SimplexMatch2D recover it, and
     how does ICGN2D1 behave on the exact same data? (reports what actually
     happens, not a forced narrative)
+ 3. A full-branch-audit finding: compute() used to discard
+    NelderMead::minimize()'s own convergence flag, so exhausting the
+    iteration budget got reported as a plausible-looking zncc instead of
+    STATUS_MAX_ITERATIONS_REACHED -- verified fixed by starving the solver
+    of iterations and confirming the sentinel now fires.
+ 4. The precondition NaN guard used to only check deformation.u/v, not the
+    four affine gradient terms (ux/uy/vx/vy) that ReliabilityGuided2D/
+    SequenceTracker2D also feed across this module boundary -- verified a
+    NaN confined to ux alone is still rejected.
 */
 
 #include <iostream>
+#include <limits>
 #include <random>
 
 #include "opencorr.h"
@@ -140,6 +150,12 @@ int main()
 	SimplexMatch2D simplex_low(20, 20, 1);
 	simplex_low.setImages(low_ref, low_tar);
 	simplex_low.prepare();
+	//this noisy low-contrast case never actually satisfied the default 200-iteration/1e-6
+	//tolerance budget -- it was passing before only because compute() silently discarded
+	//NelderMead::minimize()'s convergence flag and reported a plausible-looking zncc from the
+	//unconverged final cost anyway (the exact bug fixed alongside this test). A more generous
+	//but still reasonable budget lets it genuinely converge (204 iterations) instead.
+	simplex_low.setIteration(500, 1e-4f);
 	simplex_low.compute(&poi_b);
 
 	cout << "  ground truth: u=" << true_u << " v=" << true_v << endl;
@@ -162,6 +178,30 @@ int main()
 	bool simplex_ok = poi_b.result.zncc > 0.5f && simplex_err < 0.5f;
 	cout << "  " << (simplex_ok ? "PASS" : "FAIL") << ": SimplexMatch2D converges to a plausible answer without gradient information" << endl;
 	if (!simplex_ok) failures++;
+
+	//--- STATUS_MAX_ITERATIONS_REACHED must actually fire, not be silently discarded ---
+	cout << endl << "=== Non-convergence must be reported, not silently treated as success ===" << endl;
+	SimplexMatch2D simplex_starved(20, 20, 1);
+	simplex_starved.setImages(low_ref, low_tar);
+	simplex_starved.prepare();
+	simplex_starved.setIteration(2, 1e-6f); //an unreasonably tight iteration budget for this problem
+	POI2D poi_starved(Point2D(40.f, 40.f));
+	simplex_starved.compute(&poi_starved);
+	cout << "  zncc=" << poi_starved.result.zncc << " iterations=" << poi_starved.result.iteration << endl;
+	bool starved_ok = poi_starved.result.zncc == (float)STATUS_MAX_ITERATIONS_REACHED;
+	cout << "  " << (starved_ok ? "PASS" : "FAIL") << ": exhausting the iteration budget is reported as STATUS_MAX_ITERATIONS_REACHED, "
+		"not a plausible-looking zncc computed from the unconverged final cost" << endl;
+	if (!starved_ok) failures++;
+
+	//--- the NaN precondition guard must cover the affine gradient terms too, not just u/v ---
+	cout << endl << "=== NaN guard must cover ux/uy/vx/vy, not just u/v ===" << endl;
+	POI2D poi_nan_gradient(Point2D(40.f, 40.f));
+	poi_nan_gradient.deformation.ux = std::numeric_limits<float>::quiet_NaN(); //u/v themselves are still finite
+	simplex_low.compute(&poi_nan_gradient);
+	bool nan_gradient_ok = poi_nan_gradient.result.zncc == (float)STATUS_INVALID_SUBSET_OR_GUESS;
+	cout << "  zncc=" << poi_nan_gradient.result.zncc
+		<< " " << (nan_gradient_ok ? "PASS" : "FAIL") << ": NaN confined to ux alone is still rejected" << endl;
+	if (!nan_gradient_ok) failures++;
 
 	cout << endl << (failures == 0 ? "ALL CHECKS PASSED" : "SOME CHECKS FAILED") << " (" << failures << " failure(s))" << endl;
 	return failures == 0 ? 0 : 1;

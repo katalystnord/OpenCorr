@@ -344,14 +344,20 @@ namespace opencorr
 		if (poi->y - subset_ry < 0 || poi->x - subset_rx < 0
 			|| poi->y + subset_ry > ref_img->height - 1 || poi->x + subset_rx > ref_img->width - 1
 			|| std::fabs(poi->deformation.u) >= ref_img->width || std::fabs(poi->deformation.v) >= ref_img->height
-			|| std::isnan(poi->deformation.u) || std::isnan(poi->deformation.v))
+			|| std::isnan(poi->deformation.u) || std::isnan(poi->deformation.v)
+			|| std::isnan(poi->deformation.ux) || std::isnan(poi->deformation.uy)
+			|| std::isnan(poi->deformation.vx) || std::isnan(poi->deformation.vy))
 		{
 			//matches ICGN2D1::compute(POI2D*)'s own precondition check (oc_icgn.cpp) -- without
 			//this, a NaN or wildly out-of-range incoming initial guess (e.g. from a degenerate
 			//upstream POI in ReliabilityGuided2D/SequenceTracker2D) would flow straight into
 			//Nelder-Mead instead of being cleanly rejected, and NaN comparisons in the
 			//optimizer's vertex selection are all false, so it would silently return a
-			//garbage "best" vertex rather than erroring
+			//garbage "best" vertex rather than erroring. Checks all six of this solver's own
+			//state variables (u,ux,uy,v,vx,vy), not just u/v -- ReliabilityGuided2D's Taylor
+			//extrapolation and SequenceTracker2D's continuity guess both feed the affine
+			//gradient terms across this module boundary too, so a NaN confined to just one of
+			//those wouldn't have been caught by a narrower check.
 			poi->result.zncc = (float)STATUS_INVALID_SUBSET_OR_GUESS;
 			return;
 		}
@@ -376,7 +382,7 @@ namespace opencorr
 		NelderMead simplex(max_iterations, tolerance);
 		int iterations_used = 0;
 		float znssd_final = 0.f;
-		simplex.minimize(p, deltas,
+		bool converged = simplex.minimize(p, deltas,
 			[&](const std::vector<float>& variables) { return znssd(instance.get(), ref_mean_norm, variables, subset_rx, subset_ry); },
 			iterations_used, znssd_final); //final_cost is the winning vertex's already-computed cost -- no redundant re-evaluation needed
 
@@ -390,6 +396,17 @@ namespace opencorr
 		poi->result.zncc = 0.5f * (2.f - znssd_final);
 		poi->result.iteration = (float)iterations_used;
 		poi->result.convergence = znssd_final;
+
+		//unlike ICGN/ICLM/NR, this solver previously discarded NelderMead::minimize()'s own
+		//convergence flag entirely -- a POI that exhausted max_iterations without converging
+		//got a normal-looking zncc computed from its (poor) final cost, indistinguishable from
+		//a genuinely-solved low-quality match, and a caller filtering on
+		//STATUS_MAX_ITERATIONS_REACHED (as it validly can for every other solver) would never
+		//see one from SimplexMatch2D
+		if (!converged)
+		{
+			poi->result.zncc = (float)STATUS_MAX_ITERATIONS_REACHED;
+		}
 	}
 
 	void SimplexMatch2D::compute(std::vector<POI2D>& poi_queue)
