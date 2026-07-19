@@ -179,6 +179,27 @@ int main()
 		<< ": the fake-failed POI's garbage displacement was excluded from the fit, not blended in" << endl;
 	if (!failure_excluded_ok) failures++;
 
+	//--- ambient thread count exceeding the instance pool's own size must not
+	//crash (mirrors Uncertainty2D's own num_threads(thread_number) guard,
+	//oc_uncertainty.cpp) -- CrackResidual2D is meant to run as a distinct,
+	//later diagnostic pass, so by the time a caller gets here the ambient
+	//OpenMP thread count could plausibly no longer match what the instance
+	//pool was constructed with
+	cout << endl << "=== Ambient thread count mismatch must not crash ===" << endl;
+	{
+		int small_thread_number = 2;
+		omp_set_num_threads(8); //ambient count now exceeds the pool below
+
+		CrackResidual2D crack_residual_narrow_pool(30.f, 6, small_thread_number);
+		crack_residual_narrow_pool.prepare(poi_queue);
+		crack_residual_narrow_pool.compute(ref_img, tar_img, poi_queue);
+
+		cout << "  PASS: compute() completed without crashing despite ambient thread count (8) "
+			"exceeding the instance pool size (" << small_thread_number << ")" << endl;
+
+		omp_set_num_threads(thread_number); //restore
+	}
+
 	cout << endl << (failures == 0 ? "ALL CHECKS PASSED" : "SOME CHECKS FAILED") << " (" << failures << " failure(s))" << endl;
 	return failures == 0 ? 0 : 1;
 }

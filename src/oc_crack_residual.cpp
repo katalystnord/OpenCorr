@@ -93,7 +93,11 @@ namespace opencorr
 			max_y = std::min(max_y, roi->getMaxY());
 		}
 
-#pragma omp parallel for
+		//pinned to the instance pool's own size, not the ambient OpenMP thread count --
+		//this runs as a distinct, later pass (after solving), so by the time a caller
+		//gets here the ambient thread count could plausibly no longer match thread_number
+		//(same rationale as Uncertainty2D::compute(), oc_uncertainty.cpp)
+#pragma omp parallel for num_threads(thread_number)
 		for (int y = min_y; y <= max_y; y++)
 		{
 			std::unique_ptr<NearestNeighbor>& neighbor_search = getInstance(omp_get_thread_num());
