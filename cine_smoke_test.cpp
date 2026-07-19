@@ -8,7 +8,11 @@
  OpenCorr, not just structurally valid.
 */
 
+#include <cstdint>
+#include <cstdio>
+#include <fstream>
 #include <iostream>
+#include <vector>
 
 #include "opencorr.h"
 
@@ -81,6 +85,86 @@ int main()
 	for (auto& poi : poi_queue) if (poi.result.zncc > 0.f) valid++;
 	cout << poi_queue.size() << " POIs, " << valid << " produced a valid ZNCC result "
 		<< "(low bar -- this is an unpatterned/low-contrast test frame pair, the point is that the pipeline runs end to end on cine-decoded images)." << endl;
+
+	//--- regression: a truncated .cine file must fail cleanly, not silently seek to
+	//garbage (hypercine's HyperCine::read_header(), deps/hypercine/hypercine.cpp) ---
+	//
+	//Truncating a real bundled .cine file lands on an EARLIER, pre-existing sanity check
+	//(bitmap_header_.size_image*header_.image_count <= file_size) for essentially any
+	//meaningful truncation, since the real files here are dominated by image-data bytes --
+	//that check alone already throws for those cases, before this fix's own guards would
+	//ever run. To actually exercise this fix (frame_rate and the image-offsets loop, both
+	//previously read with no check at all), a minimal SYNTHETIC .cine byte layout is
+	//hand-built below with just enough of the header/bitmap-header fields to satisfy every
+	//pre-existing check, then truncated exactly at the point where frame_rate would be
+	//read -- isolating the specific gap this fix closes.
+	cout << endl << "=== Regression: truncated cine file fails cleanly ===" << endl;
+	{
+		std::vector<char> buf;
+		auto push16 = [&](uint16_t v) { buf.insert(buf.end(), (char*)&v, (char*)&v + 2); };
+		auto push32 = [&](uint32_t v) { buf.insert(buf.end(), (char*)&v, (char*)&v + 4); };
+		auto push64 = [&](uint64_t v) { buf.insert(buf.end(), (char*)&v, (char*)&v + 8); };
+
+		//CINE header (44 bytes total, matching hypercine's own HEADER_SIZE macro)
+		push16(0);        //type
+		push16(44);       //header_size == test_size (36 fixed fields + 8-byte trigger_time)
+		push16(0);        //compression, must be 0
+		push16(1);        //version, must be 1
+		push32(0);        //first_movie_image
+		push32(2);        //total_image_count
+		push32(0);        //first_image_no
+		push32(2);        //image_count -- >=2 so the unrelated "must have at least two images" check doesn't fire first
+		push32(44);       //off_image_header, must == test_size (44)
+		push32(84);       //off_setup -- points exactly at EOF of this synthetic file
+		push32(84);       //off_image_offsets -- also exactly at EOF
+		push64(0);        //trigger_time (TIME64, 8 bytes)
+
+		//BITMAP header (40 bytes, matching header_test_size)
+		push32(40);       //size == header_test_size
+		push32(4);        //width
+		push32(4);        //height
+		push16(1);        //planes
+		push16(8);        //bit_count, must be 8 or 16
+		push32(0);        //compression
+		push32(16);       //size_image (4*4*1 byte/px) -- size_image*image_count=32 <= file_size(84)
+		push32(0);        //x_pixels_per_meter
+		push32(0);        //y_pixels_per_meter
+		push32(0);        //clr_used, must be 0
+		push32(0);        //clr_important
+
+		bool synth_layout_ok = buf.size() == 84;
+		cout << "  synthetic header built: " << buf.size() << " bytes (expected 84)" << endl;
+
+		string truncated_path = "examples/cine/truncated_smoke_test.cine";
+		std::ofstream truncated_file(truncated_path, std::ios::binary);
+		truncated_file.write(buf.data(), (std::streamsize)buf.size());
+		truncated_file.close();
+
+		bool threw_cleanly = false;
+		string what_message;
+		try
+		{
+			Cine2D truncated_cine(truncated_path);
+		}
+		catch (std::exception& e)
+		{
+			threw_cleanly = true;
+			what_message = e.what();
+		}
+		catch (...)
+		{
+			//some non-std::exception was thrown -- still "failed cleanly" in the sense of
+			//not silently succeeding, but not the descriptive exception the fix produces
+		}
+
+		remove(truncated_path.c_str());
+
+		cout << "  threw=" << threw_cleanly << " what=\"" << what_message << "\"" << endl;
+		bool truncation_ok = synth_layout_ok && threw_cleanly && what_message.find("truncated cine file") != string::npos;
+		cout << "  " << (truncation_ok ? "PASS" : "FAIL")
+			<< ": truncated file throws a clear, descriptive exception instead of silently proceeding" << endl;
+		if (!truncation_ok) failures++;
+	}
 
 	cout << endl << (failures == 0 ? "ALL CHECKS PASSED" : "SOME CHECKS FAILED") << " (" << failures << " failure(s))" << endl;
 

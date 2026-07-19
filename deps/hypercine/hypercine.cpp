@@ -511,6 +511,9 @@ HyperCine::read_header(const char * file_name){
   cine_file.read(reinterpret_cast<char*>(&header_.off_image_offsets), sizeof(header_.off_image_offsets));
   DEBUG_MSG("HyperCine::read_header(): offset image offsets: " << header_.off_image_offsets);
   cine_file.read(reinterpret_cast<char*>(&header_.trigger_time), sizeof(header_.trigger_time));
+  if(cine_file.fail()){
+    throw std::invalid_argument("HyperCine::read_header(): truncated cine file, failed reading CINE header fields: " + (std::string)file_name);
+  }
   image_offsets_.resize(header_.image_count);
 
   // BITMAP HEADER
@@ -562,6 +565,9 @@ HyperCine::read_header(const char * file_name){
   ASSERT_OR_EXCEPTION(bitmap_header_.clr_used==0);
   cine_file.read(reinterpret_cast<char*>(&bitmap_header_.clr_important), sizeof(bitmap_header_.clr_important));
   DEBUG_MSG("HyperCine::read_header(): important colors:        " << bitmap_header_.clr_important);
+  if(cine_file.fail()){
+    throw std::invalid_argument("HyperCine::read_header(): truncated cine file, failed reading bitmap header fields: " + (std::string)file_name);
+  }
 
   if(bit_depth==8){
     bitmap_header_.bit_depth=BIT_DEPTH_8;
@@ -601,6 +607,9 @@ HyperCine::read_header(const char * file_name){
   cine_file.seekg(header_.off_setup);
   uint16_t frame_rate;
   cine_file.read(reinterpret_cast<char*>(&frame_rate), sizeof(frame_rate));
+  if(cine_file.fail()){
+    throw std::invalid_argument("HyperCine::read_header(): truncated cine file, failed reading frame rate: " + (std::string)file_name);
+  }
   bitmap_header_.frame_rate = frame_rate;
 
   // read the image offsets:
@@ -609,6 +618,10 @@ HyperCine::read_header(const char * file_name){
   for (size_t i=0;i<header_.image_count;++i){
     int64_t offset;
     cine_file.read(reinterpret_cast<char*>(&offset), sizeof(offset));
+    if(cine_file.fail()){
+      throw std::invalid_argument("HyperCine::read_header(): truncated cine file, failed reading image offset "
+        + std::to_string(i) + " of " + std::to_string(header_.image_count) + ": " + (std::string)file_name);
+    }
     image_offsets_[i] = offset;
   }
   // close the file:
