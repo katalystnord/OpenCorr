@@ -51,8 +51,10 @@ namespace opencorr
 			//beta: cost-function-conditioning probe (reciprocal-slope sensitivity of ZNSSD
 			//to a small u/v/rotation perturbation around the converged solution, matching
 			//DICe's Objective::beta()); larger means WORSE conditioned/less trustworthy.
-			//0 if not attempted (subset itself degenerate); -1 if the perturbation probe
-			//itself was undefined (cost flat enough that the slope is effectively infinite).
+			//-1 if not attempted (subset itself degenerate, out of bounds, or the
+			//perturbation probe was undefined -- cost flat enough that the slope is
+			//effectively infinite); 0.f is a misleading sentinel for any of these, since it
+			//would read as "extremely well-conditioned" rather than "never evaluated".
 			//Both filled by Uncertainty2D, see oc_uncertainty.h.
 			float sigma, beta;
 		};

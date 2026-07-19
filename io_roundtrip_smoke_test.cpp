@@ -62,7 +62,7 @@ int main()
 	if (legacy_loaded.size() != 1) { cout << "FAIL: legacy wrong row count " << legacy_loaded.size() << endl; failures++; }
 	else {
 		POI2D& p = legacy_loaded[0];
-		bool ok = p.result.sigma == -1.f && p.result.beta == 0.f
+		bool ok = p.result.sigma == -1.f && p.result.beta == -1.f
 			&& fabs(p.strain.exx - 0.01f) < 1e-4f && fabs(p.strain.eyy - 0.02f) < 1e-4f
 			&& fabs(p.strain.exy - 0.03f) < 1e-4f
 			&& fabs(p.subset_radius.x - 16.f) < 1e-4f && fabs(p.subset_radius.y - 16.f) < 1e-4f;
@@ -71,6 +71,32 @@ int main()
 			<< " subset_rx=" << p.subset_radius.x << " subset_ry=" << p.subset_radius.y << endl;
 		cout << (ok ? "PASS" : "FAIL") << ": legacy 15-column CSV loads correctly, sigma/beta sentinels set" << endl;
 		if (!ok) failures++;
+	}
+
+	// --- regression: a row whose result-column count is neither the current format (8) nor
+	// the legacy format (6) -- e.g. a single field dropped somewhere by hand-editing or a
+	// writer bug -- must be rejected, not silently clamped/accepted with strain/subset_radius
+	// misread from the wrong offset. (A row that happens to total exactly 15/17 fields for the
+	// WRONG reason -- e.g. two fields dropped from a different section than sigma/beta -- is a
+	// separate, inherent ambiguity a purely column-count-based heuristic can't resolve without
+	// a format marker in the file itself; this regression targets the case that IS closable:
+	// a column count matching neither known width at all.)
+	{
+		ofstream ambiguous("/tmp/oc_io_ambiguous.csv");
+		ambiguous << "x,y,u,v,u0,v0,ZNCC,iteration,convergence,sigma,beta,exx,eyy,exy,subset_rx,subset_ry" << endl;
+		//7 "result" fields (u0,v0,ZNCC,iteration,convergence,sigma,beta) -- "feature" dropped,
+		//neither the legacy 6 nor the current 8
+		ambiguous << "10,20,1.5,-0.5,1,-0.4,0.98,3,0.001,0.005,0.2,0.01,0.02,0.03,16,16" << endl;
+		ambiguous.close();
+
+		IO2D io_ambiguous;
+		io_ambiguous.setDelimiter(",");
+		io_ambiguous.setPath("/tmp/oc_io_ambiguous.csv");
+		vector<POI2D> ambiguous_loaded = io_ambiguous.loadTable2D();
+		bool ambiguous_ok = ambiguous_loaded.empty();
+		cout << "ambiguous-width row (7 result fields, neither 6 nor 8): loaded " << ambiguous_loaded.size() << " POIs" << endl;
+		cout << (ambiguous_ok ? "PASS" : "FAIL") << ": row rejected instead of silently misread from the wrong offset" << endl;
+		if (!ambiguous_ok) failures++;
 	}
 
 	// --- loadDeformationTable2D(): previously had no counterpart to saveDeformationTable2D(),

@@ -268,22 +268,27 @@ namespace opencorr
 
 			int current_index = 4;
 			int max_result_size = (int)(sizeof(current_POI.result.r) / sizeof(current_POI.result.r[0]));
+			int legacy_result_size = max_result_size - 2; //pre-sigma/beta files have 2 fewer result columns
 			int strain_size = (int)(sizeof(current_POI.strain.e) / sizeof(current_POI.strain.e[0]));
 			//infer the actual result-column count from the row width rather than assuming
 			//the current struct size: a legacy file saved before sigma/beta were added has
 			//two fewer result columns (6 vs 8), and reading it against the current 8-float
-			//size would misread strain/subset_radius from the wrong offsets entirely
+			//size would misread strain/subset_radius from the wrong offsets entirely.
+			//Validated against the two known-valid widths explicitly, not just clamped: a
+			//clamp alone would accept ANY row whose column count happened to fall at or
+			//below max_result_size (e.g. a current-format row missing two fields in the
+			//middle) as if it were an intentional legacy row, silently misreading
+			//strain/subset_radius from the wrong offsets with no error at all.
+			//Residual, NOT closable by a column-count check alone: a current-format row
+			//that happens to drop exactly two fields from a DIFFERENT section (not
+			//sigma/beta) still totals the same column count as a genuine legacy row, and
+			//is indistinguishable from one without a format marker in the file itself.
 			int array_size = (int)key_buffer.size() - current_index - strain_size - 2;
-			if (array_size > max_result_size) array_size = max_result_size;
-			if (array_size < 0) array_size = 0;
-
-			//the clamp above only protects the result.r loop itself -- it doesn't guarantee
-			//enough fields remain for the strain/subset_radius reads that follow, which
-			//previously ran unconditionally regardless of how short (or how mis-clamped) the
-			//row actually was
-			if ((int)key_buffer.size() < current_index + array_size + strain_size + 2)
+			if (array_size != legacy_result_size && array_size != max_result_size)
 			{
-				std::cerr << "skipping malformed/truncated row (fewer fields than its own inferred width implies): " << data_line << std::endl;
+				std::cerr << "skipping malformed row (result-column count is neither the current format ("
+					<< max_result_size << ") nor the legacy format (" << legacy_result_size << "), got "
+					<< array_size << "): " << data_line << std::endl;
 				continue;
 			}
 
@@ -294,9 +299,11 @@ namespace opencorr
 			if (array_size < max_result_size)
 			{
 				//legacy file predates sigma/beta -- mark them as not computed rather than
-				//leaving whatever POI2D::clear() happened to zero-initialize
+				//leaving whatever POI2D::clear() happened to zero-initialize. -1.f for both:
+				//beta is smaller-is-better, so 0.f would misleadingly read as "extremely
+				//well-conditioned" instead of "not computed" (see oc_uncertainty.cpp)
 				current_POI.result.sigma = -1.f;
-				current_POI.result.beta = 0.f;
+				current_POI.result.beta = -1.f;
 			}
 
 			current_index += array_size;
