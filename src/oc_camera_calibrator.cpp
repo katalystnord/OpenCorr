@@ -797,15 +797,21 @@ namespace opencorr
 
 	float CameraCalibrator::calibrate(Calibration& camera)
 	{
-		if (mono_image_points.empty())
+		if (mono_image_points.size() < 2)
 		{
 			//addImage() silently excludes failed detections rather than treating them as an
 			//error (matches DICe's own "exclude and continue" behavior) -- so it's reachable
-			//in normal use for every image in a batch to fail (bad lighting, wrong
-			//board_width/board_height). Without this check, cv::calibrateCamera's own
-			//internal CV_Assert(nimages>0) throws an uncaught cv::Exception instead of a
-			//clear, catchable error.
-			throw std::string("CameraCalibrator::calibrate(): no successfully-detected images to calibrate from");
+			//in normal use for every image (or all but one) in a batch to fail (bad lighting,
+			//wrong board_width/board_height). A single planar-target view cannot separate the
+			//intrinsic matrix from the extrinsic pose at all (Zhang's method's own minimum,
+			//not merely a lower-accuracy regime) -- cv::calibrateCamera doesn't necessarily
+			//throw on 0 or 1 image (its own internal CV_Assert only guards nimages>0, and a
+			//single-view solve can still numerically "succeed" while being degenerate/
+			//near-singular), so this has to be caught here rather than relying on it to fail
+			//loudly downstream.
+			throw std::string("CameraCalibrator::calibrate(): at least 2 successfully-detected images are required "
+				"(a single planar-target view cannot separate intrinsics from extrinsics); have "
+				+ std::to_string(mono_image_points.size()));
 		}
 
 		std::vector<std::vector<cv::Point3f>> object_points;
@@ -837,9 +843,15 @@ namespace opencorr
 
 	float CameraCalibrator::calibrateStereo(Calibration& left_camera, Calibration& right_camera, CameraExtrinsics& right_extrinsics)
 	{
-		if (stereo_left_points.empty())
+		if (stereo_left_points.size() < 2)
 		{
-			throw std::string("CameraCalibrator::calibrateStereo(): no successfully-detected image pairs to calibrate from");
+			//see calibrate()'s own comment -- the same "at least 2 views" floor applies here,
+			//for the same reason (a single pair can't separate intrinsics from extrinsics),
+			//plus cv::stereoCalibrate solves for the relative pose (R, T) between cameras on
+			//top of that, which is equally underdetermined from a single pair
+			throw std::string("CameraCalibrator::calibrateStereo(): at least 2 successfully-detected image pairs are required "
+				"(a single pair cannot separate intrinsics from extrinsics); have "
+				+ std::to_string(stereo_left_points.size()));
 		}
 
 		std::vector<std::vector<cv::Point3f>> object_points;

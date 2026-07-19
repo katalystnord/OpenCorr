@@ -54,6 +54,24 @@ namespace opencorr
 	//dots can be missed to lighting/occlusion -- so each detected image/pair
 	//carries its own subset of object_points_template rather than assuming the
 	//full grid, mirroring DICe's own per-image "common point" handling.
+	//
+	//Known limitation -- checkerboard corner-order ambiguity: cv::findChessboardCorners
+	//locates the internal-corner GRID GEOMETRY only; it has no notion of which physical
+	//corner of the board is "first," so its returned order can be consistent with either
+	//of the board's two 180-degree-rotated readings, board-pose-dependently, with no
+	//signal in the returned data to tell which one actually happened. A plain checkerboard
+	//provides no marking to resolve this (this is exactly why dot targets carry the 3
+	//donut markers -- axis/origin determination a plain checkerboard structurally cannot
+	//do). DICe's own equivalent code (opencv_checkerboard_targets(),
+	//DICe_OpenCVServerUtils.cpp) has this same gap, unaddressed. A heuristic "assume the
+	//board is held upright" correction was considered and rejected: this class's own
+	//calibration quality depends on genuine POSE DIVERSITY across images (tilted, not just
+	//frontal, views -- see calibration_smoke_test.cpp's own tilt distribution), which is
+	//exactly the condition under which an "upright" assumption is least reliable, so a
+	//heuristic here would trade a known, visible gap for an occasional silent wrong-flip
+	//that's much harder to diagnose after the fact. If this becomes a real blocker,
+	//the fix is a target-level one (an asymmetric marking on the checkerboard itself, or
+	//preferring the dot-target path, which already solves this), not a per-frame guess.
 
 	enum class CalibrationTargetType
 	{
@@ -89,6 +107,26 @@ namespace opencorr
 
 		//detect the calibration target in a left/right image pair; returns true only if
 		//found in both, and (for dot targets) at least one point is common to both images
+		//
+		//Known residual risk (dot targets) -- left/right each independently choose which
+		//detected donut marker is "origin" via reorderMarkers()'s own dense-fiducial-line
+		//vote (oc_camera_calibrator.cpp): a geometric property of the physical target, so
+		//left and right agreeing is the expected case. But the vote is DATA-dependent (dot
+		//dropout from occlusion/lighting can weaken a line's count), so a partial detection
+		//affecting one view but not the other could in principle make the two sides pick
+		//DIFFERENT physical markers as origin -- silently offsetting that view's entire grid
+		//numbering relative to the other's. This is not directly checkable from grid indices
+		//alone: the common-point matching below only compares index NUMBERS, which stay
+		//internally consistent even under a systematic offset, so it cannot distinguish
+		//"these indices refer to the same physical dots" from "these indices happen to
+		//collide numerically." In practice a genuine origin disagreement offsets EVERY
+		//index, which collapses the common-point overlap to little more than chance and
+		//gets caught by the existing 70%-common-points floor (see addImagePair()'s own
+		//implementation) -- but that is an indirect consequence, not a targeted check, and
+		//a rare partial disagreement could in principle still clear it. A fully robust fix
+		//needs pixel-geometry cross-referencing (e.g. a homography-consistency check across
+		//the matched point sets), not just index comparison -- future work if this shows up
+		//in practice, not implemented here.
 		bool addImagePair(const std::string& left_image_path, const std::string& right_image_path);
 		int pairCount() const;
 

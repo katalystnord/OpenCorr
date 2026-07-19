@@ -322,6 +322,51 @@ int main()
 		if (!pair_added) failures++;
 	}
 
+	//--- regression: calibrating from fewer than 2 views must throw a clear error, not
+	//silently hand cv::calibrateCamera/cv::stereoCalibrate a mathematically underdetermined
+	//problem that can numerically "succeed" while producing a degenerate/near-singular result ---
+	cout << endl << "=== Fewer than 2 views must throw, not silently under-solve ===" << endl;
+	{
+		CameraCalibrator one_view_calibrator(board_width, board_height, square_size);
+		cv::Mat rvec = (cv::Mat_<double>(3, 1) << 0.1, 0.05, 0.0);
+		cv::Mat tvec = (cv::Mat_<double>(3, 1) << -board_width * square_size / 2, -board_height * square_size / 2, 600.0);
+		cv::Mat img = renderCheckerboard(board_width, board_height, square_size, gt_camera_matrix, rvec, tvec, image_width, image_height);
+		string path = "/tmp/oc_cal_one_view.png";
+		cv::imwrite(path, img);
+		one_view_calibrator.addImage(path);
+
+		bool threw = false;
+		try
+		{
+			Calibration dummy_camera;
+			one_view_calibrator.calibrate(dummy_camera);
+		}
+		catch (std::string&)
+		{
+			threw = true;
+		}
+		cout << "  1 image, calibrate() threw: " << threw << endl;
+		cout << "  " << (threw ? "PASS" : "FAIL") << ": calibrate() rejects a single view instead of under-solving silently" << endl;
+		if (!threw) failures++;
+
+		CameraCalibrator one_pair_calibrator(board_width, board_height, square_size);
+		one_pair_calibrator.addImagePair("/tmp/oc_cal_mismatched_l.png", "/tmp/oc_cal_mismatched_r.png");
+		bool stereo_threw = false;
+		try
+		{
+			Calibration dummy_left, dummy_right;
+			CameraExtrinsics dummy_extrinsics;
+			one_pair_calibrator.calibrateStereo(dummy_left, dummy_right, dummy_extrinsics);
+		}
+		catch (std::string&)
+		{
+			stereo_threw = true;
+		}
+		cout << "  1 pair, calibrateStereo() threw: " << stereo_threw << endl;
+		cout << "  " << (stereo_threw ? "PASS" : "FAIL") << ": calibrateStereo() rejects a single pair instead of under-solving silently" << endl;
+		if (!stereo_threw) failures++;
+	}
+
 	cout << endl << (failures == 0 ? "ALL CHECKS PASSED" : "SOME CHECKS FAILED") << " (" << failures << " failure(s))" << endl;
 
 	return failures == 0 ? 0 : 1;
