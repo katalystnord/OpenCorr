@@ -48,9 +48,12 @@ namespace opencorr
 			float u0, v0, zncc, iteration, convergence, feature;
 			//sigma: closed-form displacement-uncertainty estimate (Sutton/Schreier-style,
 			//from image noise + subset gradient content); -1 if not computed or degenerate.
-			//beta: cost-function-conditioning probe (finite-difference sensitivity of ZNSSD
-			//to a small u/v/rotation perturbation around the converged solution); 0 if not
-			//computed. Both filled by Uncertainty2D, see oc_uncertainty.h.
+			//beta: cost-function-conditioning probe (reciprocal-slope sensitivity of ZNSSD
+			//to a small u/v/rotation perturbation around the converged solution, matching
+			//DICe's Objective::beta()); larger means WORSE conditioned/less trustworthy.
+			//0 if not attempted (subset itself degenerate); -1 if the perturbation probe
+			//itself was undefined (cost flat enough that the slope is effectively infinite).
+			//Both filled by Uncertainty2D, see oc_uncertainty.h.
 			float sigma, beta;
 		};
 		float r[8];

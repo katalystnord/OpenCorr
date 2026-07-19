@@ -70,7 +70,7 @@ int main()
 
 	//summary stats, and a handful of sample rows
 	double sum_sigma = 0.0, sum_beta = 0.0;
-	int valid_sigma = 0;
+	int valid_sigma = 0, valid_beta = 0;
 	float min_sigma = 1e9f, max_sigma = -1e9f, min_beta = 1e9f, max_beta = -1e9f;
 	for (auto& poi : poi_queue)
 	{
@@ -82,16 +82,23 @@ int main()
 			min_sigma = std::min(min_sigma, poi.result.sigma);
 			max_sigma = std::max(max_sigma, poi.result.sigma);
 		}
-		sum_beta += poi.result.beta;
-		min_beta = std::min(min_beta, poi.result.beta);
-		max_beta = std::max(max_beta, poi.result.beta);
+		//beta == -1.f: DICe-style "undefined" sentinel (cost too flat along some axis),
+		//distinct from a real (always non-negative) conditioning value
+		if (poi.result.beta >= 0.f)
+		{
+			sum_beta += poi.result.beta;
+			valid_beta++;
+			min_beta = std::min(min_beta, poi.result.beta);
+			max_beta = std::max(max_beta, poi.result.beta);
+		}
 	}
 
 	cout << "sigma: mean=" << (valid_sigma ? sum_sigma / valid_sigma : 0.0)
 		<< " min=" << min_sigma << " max=" << max_sigma
 		<< " (" << valid_sigma << " valid of " << converged << " converged)" << endl;
-	cout << "beta:  mean=" << (converged ? sum_beta / converged : 0.0)
-		<< " min=" << min_beta << " max=" << max_beta << endl;
+	cout << "beta:  mean=" << (valid_beta ? sum_beta / valid_beta : 0.0)
+		<< " min=" << min_beta << " max=" << max_beta
+		<< " (" << valid_beta << " valid of " << converged << " converged)" << endl;
 
 	//dump a small sample table
 	string file_path = tar_image_path.substr(0, tar_image_path.find_last_of(".")) + "_uncertainty_sample.csv";

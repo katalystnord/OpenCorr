@@ -33,15 +33,21 @@ namespace opencorr
 	//noiseStdDev() implements J. Immerkaer, "Fast Noise Variance
 	//Estimation," CVGIP (1996) 64(2): 300-302.
 	//
-	//beta - cost-function-conditioning probe: finite-difference sensitivity
-	//of the ZNSSD cost to a small perturbation of the rigid-body subspace
-	//(u, v, and an infinitesimal rotation theta, implemented as an
+	//beta - cost-function-conditioning probe: reciprocal-slope sensitivity
+	//of the ZNSSD cost to a small one-sided perturbation of the rigid-body
+	//subspace (u, v, and an infinitesimal rotation theta, implemented as an
 	//antisymmetric perturbation of uy/vx) around the converged solution,
 	//holding the remaining affine shape-function terms fixed. This isolates
 	//the same (u, v, theta) subspace DICe's own Objective::beta() perturbs
-	//natively, adapted to OpenCorr's 6-parameter affine model. A larger
-	//beta means the cost function is more sharply peaked at the converged
-	//minimum, i.e. a better-conditioned, more trustworthy match.
+	//natively, adapted to OpenCorr's 6-parameter affine model, and follows
+	//DICe's own formula exactly: for each axis, evaluate ZNSSD one step of
+	//epsilon on either side of the minimum, take |epsilon / (gamma - gamma_0)|
+	//scaled by a per-axis factor (1e-3 for u/v, 1e-1 for theta, matching
+	//DICe) on each side, and average the two. The three per-axis values
+	//combine via their L2 norm. Because this is a *reciprocal* slope, a
+	//LARGER beta means a FLATTER cost function near the minimum, i.e. a
+	//worse-conditioned, less trustworthy match -- consistent with sigma,
+	//where larger also means worse: both metrics agree larger is worse.
 	//
 	//Neither metric requires re-running the ICGN solve: sigma only needs
 	//the reference-image gradient (already computed for the Hessian) and a

@@ -232,33 +232,61 @@ namespace opencorr
 			return;
 		}
 
+		const float abort_threshold = 1.0e-10f; //matches DICe's own Objective::beta() abort tolerance
+
 		instance->tar_subset->center = (Point2D)*poi;
 
 		Deformation2D1 converged(poi->deformation.u, poi->deformation.ux, poi->deformation.uy,
 			poi->deformation.v, poi->deformation.vx, poi->deformation.vy);
 
+		float gamma_0 = znssd(instance.get(), poi, ref_mean_norm, converged, subset_rx, subset_ry);
+
 		//the rotation probe perturbs uy/vx (a spatial gradient term), which induces a
 		//displacement at the subset boundary of ~radius*rotation_step -- scaling it down by
 		//the subset radius keeps that boundary displacement comparable in magnitude to the
 		//flat `perturbation` the u/v probes induce everywhere, regardless of subset size, so
-		//d_u/d_v/d_theta stay comparable to each other and beta stays comparable across POIs
-		//solved with different subset radii
+		//the u/v/theta probes stay comparable to each other and beta stays comparable across
+		//POIs solved with different subset radii
 		float rotation_step = perturbation / (float)std::max(1, std::max(subset_rx, subset_ry));
 
-		float d_u = 0.f, d_v = 0.f, d_theta = 0.f;
+		//DICe's own Objective::beta(): factor[] = {1e-3, 1e-3, 1e-1} for (u, v, theta)
+		const float factor_u = 1.0e-3f, factor_v = 1.0e-3f, factor_theta = 1.0e-1f;
+
+		float dir_beta_u = 0.f, dir_beta_v = 0.f, dir_beta_theta = 0.f;
+		bool undefined = false;
 		{
 			Deformation2D1 plus(converged), minus(converged);
 			plus.setDeformation(converged.u + perturbation, converged.ux, converged.uy, converged.v, converged.vx, converged.vy);
 			minus.setDeformation(converged.u - perturbation, converged.ux, converged.uy, converged.v, converged.vx, converged.vy);
-			d_u = (znssd(instance.get(), poi, ref_mean_norm, plus, subset_rx, subset_ry)
-				- znssd(instance.get(), poi, ref_mean_norm, minus, subset_rx, subset_ry)) / (2.f * perturbation);
+			float gamma_p = znssd(instance.get(), poi, ref_mean_norm, plus, subset_rx, subset_ry);
+			float gamma_m = znssd(instance.get(), poi, ref_mean_norm, minus, subset_rx, subset_ry);
+			if (std::fabs(gamma_p - gamma_0) < abort_threshold || std::fabs(gamma_m - gamma_0) < abort_threshold)
+			{
+				undefined = true;
+			}
+			else
+			{
+				float slope_p = std::fabs(perturbation / (gamma_p - gamma_0)) * factor_u;
+				float slope_m = std::fabs(perturbation / (gamma_m - gamma_0)) * factor_u;
+				dir_beta_u = 0.5f * (slope_p + slope_m);
+			}
 		}
 		{
 			Deformation2D1 plus(converged), minus(converged);
 			plus.setDeformation(converged.u, converged.ux, converged.uy, converged.v + perturbation, converged.vx, converged.vy);
 			minus.setDeformation(converged.u, converged.ux, converged.uy, converged.v - perturbation, converged.vx, converged.vy);
-			d_v = (znssd(instance.get(), poi, ref_mean_norm, plus, subset_rx, subset_ry)
-				- znssd(instance.get(), poi, ref_mean_norm, minus, subset_rx, subset_ry)) / (2.f * perturbation);
+			float gamma_p = znssd(instance.get(), poi, ref_mean_norm, plus, subset_rx, subset_ry);
+			float gamma_m = znssd(instance.get(), poi, ref_mean_norm, minus, subset_rx, subset_ry);
+			if (std::fabs(gamma_p - gamma_0) < abort_threshold || std::fabs(gamma_m - gamma_0) < abort_threshold)
+			{
+				undefined = true;
+			}
+			else
+			{
+				float slope_p = std::fabs(perturbation / (gamma_p - gamma_0)) * factor_v;
+				float slope_m = std::fabs(perturbation / (gamma_m - gamma_0)) * factor_v;
+				dir_beta_v = 0.5f * (slope_p + slope_m);
+			}
 		}
 		{
 			//infinitesimal rotation: antisymmetric perturbation of the shear terms (uy, vx),
@@ -266,11 +294,30 @@ namespace opencorr
 			Deformation2D1 plus(converged), minus(converged);
 			plus.setDeformation(converged.u, converged.ux, converged.uy - rotation_step, converged.v, converged.vx + rotation_step, converged.vy);
 			minus.setDeformation(converged.u, converged.ux, converged.uy + rotation_step, converged.v, converged.vx - rotation_step, converged.vy);
-			d_theta = (znssd(instance.get(), poi, ref_mean_norm, plus, subset_rx, subset_ry)
-				- znssd(instance.get(), poi, ref_mean_norm, minus, subset_rx, subset_ry)) / (2.f * rotation_step);
+			float gamma_p = znssd(instance.get(), poi, ref_mean_norm, plus, subset_rx, subset_ry);
+			float gamma_m = znssd(instance.get(), poi, ref_mean_norm, minus, subset_rx, subset_ry);
+			if (std::fabs(gamma_p - gamma_0) < abort_threshold || std::fabs(gamma_m - gamma_0) < abort_threshold)
+			{
+				undefined = true;
+			}
+			else
+			{
+				float slope_p = std::fabs(rotation_step / (gamma_p - gamma_0)) * factor_theta;
+				float slope_m = std::fabs(rotation_step / (gamma_m - gamma_0)) * factor_theta;
+				dir_beta_theta = 0.5f * (slope_p + slope_m);
+			}
 		}
 
-		poi->result.beta = std::sqrt(d_u * d_u + d_v * d_v + d_theta * d_theta);
+		if (undefined)
+		{
+			//DICe's own bail-out: the cost is so flat along some axis that the reciprocal
+			//slope is effectively infinite -- distinct from beta = 0.f above (subset never
+			//evaluated at all), since 0.f would misleadingly read as "extremely well-conditioned"
+			poi->result.beta = -1.f;
+			return;
+		}
+
+		poi->result.beta = std::sqrt(dir_beta_u * dir_beta_u + dir_beta_v * dir_beta_v + dir_beta_theta * dir_beta_theta);
 	}
 
 	void Uncertainty2D::compute(std::vector<POI2D>& poi_queue)
