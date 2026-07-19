@@ -43,6 +43,29 @@ int main()
 	cout << "  clearAllObstructed() removes everything: " << (clear_all_ok ? "PASS" : "FAIL") << endl;
 	if (!clear_all_ok) failures++;
 
+	//--- check: shareObstructionMaskFrom() makes multiple instances see one live mask,
+	//matching the documented "shared scene property" semantics (oc_subset.h) ---
+	cout << endl << "=== shareObstructionMaskFrom(): one live mask across instances ===" << endl;
+	Subset2D scene_a(Point2D(10.f, 10.f), 5, 5);
+	Subset2D scene_b(Point2D(90.f, 90.f), 5, 5); //far away, doesn't overlap scene_a at all
+	scene_b.shareObstructionMaskFrom(scene_a);
+
+	scene_a.markObstructed(7, 8);
+	bool shared_mark_visible = scene_b.isObstructed(7, 8);
+	cout << "  marking through scene_a is visible through scene_b: " << (shared_mark_visible ? "PASS" : "FAIL") << endl;
+	if (!shared_mark_visible) failures++;
+
+	scene_b.clearObstructed(7, 8);
+	bool shared_clear_visible = !scene_a.isObstructed(7, 8);
+	cout << "  clearing through scene_b is visible through scene_a: " << (shared_clear_visible ? "PASS" : "FAIL") << endl;
+	if (!shared_clear_visible) failures++;
+
+	Subset2D independent(Point2D(50.f, 50.f), 5, 5); //never shared with scene_a/scene_b
+	scene_a.markObstructed(20, 20);
+	bool independent_unaffected = !independent.isObstructed(20, 20);
+	cout << "  an instance never sharing the mask stays independent: " << (independent_unaffected ? "PASS" : "FAIL") << endl;
+	if (!independent_unaffected) failures++;
+
 	//--- check 2: phase 1 truly has no effect on fill()/zeroMeanNorm() ---
 	cout << endl << "=== regression: marking pixels obstructed doesn't change fill()/zeroMeanNorm() yet ===" << endl;
 	Image2D ref_img("examples/2d_dic/oht_cfrp_0.bmp");

@@ -23,6 +23,7 @@
 #ifndef _SUBSET_H_
 #define _SUBSET_H_
 
+#include <memory>
 #include <set>
 #include <utility>
 
@@ -54,7 +55,12 @@ namespace opencorr
 		//subset-local: obstruction (a grip, tab, fixture, or off-plane object crossing the
 		//field of view) is a property of the scene at the current frame, shared by every
 		//subset/POI that happens to overlap it, not a per-subset-local concept -- matching
-		//how DICe's own obstructed-pixel set works.
+		//how DICe's own obstructed-pixel set works. Stored behind a shared_ptr (default:
+		//each instance gets its own independent, empty set, exactly like a plain member)
+		//so that callers can opt into sharing one live mask across multiple Subset2D
+		//instances via shareObstructionMaskFrom() below, matching that documented
+		//scene-wide semantics instead of requiring every subset/POI overlapping an
+		//obstruction to be marked individually.
 		//
 		//Scope note -- this is deliberately phase 1 (data model) only, mirroring
 		//oc_shape.h's own phase 1/phase 2 split for conformal ROI shapes: marking/querying
@@ -70,8 +76,13 @@ namespace opencorr
 		void clearAllObstructed();
 		bool isObstructed(int x, int y) const;
 
+		//use the same live obstruction mask as source, instead of this instance's own
+		//independent one -- marking/clearing a pixel through either instance (or any other
+		//instance sharing the same mask) is then visible through all of them
+		void shareObstructionMaskFrom(const Subset2D& source);
+
 	private:
-		std::set<std::pair<int, int>> obstructed_pixels;
+		std::shared_ptr<std::set<std::pair<int, int>>> obstructed_pixels = std::make_shared<std::set<std::pair<int, int>>>();
 	};
 
 	class Subset3D

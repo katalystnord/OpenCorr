@@ -60,22 +60,27 @@ namespace opencorr
 
 	void Subset2D::markObstructed(int x, int y)
 	{
-		obstructed_pixels.insert({ x, y });
+		obstructed_pixels->insert({ x, y });
 	}
 
 	void Subset2D::clearObstructed(int x, int y)
 	{
-		obstructed_pixels.erase({ x, y });
+		obstructed_pixels->erase({ x, y });
 	}
 
 	void Subset2D::clearAllObstructed()
 	{
-		obstructed_pixels.clear();
+		obstructed_pixels->clear();
 	}
 
 	bool Subset2D::isObstructed(int x, int y) const
 	{
-		return obstructed_pixels.count({ x, y }) != 0;
+		return obstructed_pixels->count({ x, y }) != 0;
+	}
+
+	void Subset2D::shareObstructionMaskFrom(const Subset2D& source)
+	{
+		obstructed_pixels = source.obstructed_pixels;
 	}
 
 
