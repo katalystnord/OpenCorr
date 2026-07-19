@@ -27,6 +27,13 @@ namespace opencorr
 	PhaseCorrelation2D::PhaseCorrelation2D(int width, int height)
 		: width(width), height(height), hamming_window(true)
 	{
+		//fillWindowed()'s Hamming window divides by (width-1)/(height-1); a single-row or
+		//single-column image would divide by zero
+		if (width <= 1 || height <= 1)
+		{
+			throw std::string("PhaseCorrelation2D::PhaseCorrelation2D(): width and height must both be > 1");
+		}
+
 		int size = width * height;
 		buf_a = (fftwf_complex*)fftwf_malloc(sizeof(fftwf_complex) * size);
 		buf_b = (fftwf_complex*)fftwf_malloc(sizeof(fftwf_complex) * size);

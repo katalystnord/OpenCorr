@@ -89,6 +89,24 @@ int main()
 	cout << "  " << (crosscheck_ok ? "PASS" : "FAIL") << ": whole-image and subset-level estimates agree within integer-pixel tolerance" << endl;
 	if (!crosscheck_ok) failures++;
 
+	//--- regression: a single-row or single-column size must be rejected up front,
+	//not accepted and then divide by zero in fillWindowed()'s Hamming window
+	//((width-1)/(height-1) denominators) ---
+	cout << endl << "=== Regression: degenerate width/height rejected at construction ===" << endl;
+	{
+		bool threw_for_height1 = false, threw_for_width1 = false;
+		try { PhaseCorrelation2D degenerate(8, 1); }
+		catch (std::string&) { threw_for_height1 = true; }
+		try { PhaseCorrelation2D degenerate(1, 8); }
+		catch (std::string&) { threw_for_width1 = true; }
+
+		cout << "  height=1: threw=" << threw_for_height1 << ", width=1: threw=" << threw_for_width1 << endl;
+		bool degenerate_ok = threw_for_height1 && threw_for_width1;
+		cout << "  " << (degenerate_ok ? "PASS" : "FAIL")
+			<< ": degenerate width/height=1 rejected instead of dividing by zero" << endl;
+		if (!degenerate_ok) failures++;
+	}
+
 	cout << endl << (failures == 0 ? "ALL CHECKS PASSED" : "SOME CHECKS FAILED") << " (" << failures << " failure(s))" << endl;
 	return failures == 0 ? 0 : 1;
 }
