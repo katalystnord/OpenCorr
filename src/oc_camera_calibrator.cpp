@@ -22,6 +22,7 @@
 #include <cmath>
 #include <numeric>
 #include <set>
+#include <unordered_map>
 
 #include "oc_camera_calibrator.h"
 #include "oc_nearest_neighbor.h"
@@ -716,19 +717,26 @@ namespace opencorr
 			return false;
 		}
 
+		//grid index -> position in right_points, O(n) to build so the matching loop below
+		//is O(n) total instead of O(n^2) -- grid indices are unique per side (each refers to
+		//a distinct point in object_points_template), so this map is unambiguous
+		std::unordered_map<int, size_t> right_index_position;
+		right_index_position.reserve(right_indices.size());
+		for (size_t j = 0; j < right_indices.size(); j++)
+		{
+			right_index_position[right_indices[j]] = j;
+		}
+
 		std::vector<cv::Point2f> common_left, common_right;
 		std::vector<int> common_indices;
 		for (size_t i = 0; i < left_indices.size(); i++)
 		{
-			for (size_t j = 0; j < right_indices.size(); j++)
+			auto found = right_index_position.find(left_indices[i]);
+			if (found != right_index_position.end())
 			{
-				if (left_indices[i] == right_indices[j])
-				{
-					common_left.push_back(left_points[i]);
-					common_right.push_back(right_points[j]);
-					common_indices.push_back(left_indices[i]);
-					break;
-				}
+				common_left.push_back(left_points[i]);
+				common_right.push_back(right_points[found->second]);
+				common_indices.push_back(left_indices[i]);
 			}
 		}
 
