@@ -129,15 +129,38 @@ namespace opencorr
 					continue; //too few neighbors to fit: leave the -1.f sentinel
 				}
 
+				//exclude any neighbor the upstream solver itself couldn't trust -- a negative
+				//zncc is one of the solvers' own StatusFlag failure sentinels (oc_dic.h), and
+				//its deformation.u/v is unsolved (garbage or a stale/zero initial guess), not a
+				//real displacement. Matches the same filter Strain::compute() already applies
+				//to its own KD-tree search results (oc_strain.cpp) -- the KD-tree here is built
+				//from every POI's position regardless of zncc (see prepare()), so this is where
+				//failed POIs actually get screened out.
+				std::vector<uint32_t> good_neighbor_idx;
+				good_neighbor_idx.reserve(neighbor_num);
+				for (int i = 0; i < neighbor_num; i++)
+				{
+					if (poi_queue[neighbor_idx[i]].result.zncc >= 0.f)
+					{
+						good_neighbor_idx.push_back(neighbor_idx[i]);
+					}
+				}
+
+				int good_neighbor_num = (int)good_neighbor_idx.size();
+				if (good_neighbor_num < neighbor_number_min)
+				{
+					continue; //too few TRUSTWORTHY neighbors to fit: leave the -1.f sentinel
+				}
+
 				//local affine fit of INVERSE displacement (-u, -v) as a function of position
 				//relative to the query pixel, in deformed-image coordinate space -- the fit's
 				//intercept (row 0, since every coefficient row's dx/dy are relative to the
 				//query pixel itself) is exactly the predicted inverse displacement AT (x, y)
-				Eigen::MatrixXf coefficient_matrix = Eigen::MatrixXf::Zero(neighbor_num, 3);
-				Eigen::VectorXf inv_u_vector(neighbor_num), inv_v_vector(neighbor_num);
-				for (int i = 0; i < neighbor_num; i++)
+				Eigen::MatrixXf coefficient_matrix = Eigen::MatrixXf::Zero(good_neighbor_num, 3);
+				Eigen::VectorXf inv_u_vector(good_neighbor_num), inv_v_vector(good_neighbor_num);
+				for (int i = 0; i < good_neighbor_num; i++)
 				{
-					POI2D& neighbor_poi = poi_queue[neighbor_idx[i]];
+					POI2D& neighbor_poi = poi_queue[good_neighbor_idx[i]];
 					float deformed_x = neighbor_poi.x + neighbor_poi.deformation.u;
 					float deformed_y = neighbor_poi.y + neighbor_poi.deformation.v;
 

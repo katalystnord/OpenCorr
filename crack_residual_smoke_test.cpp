@@ -127,6 +127,58 @@ int main()
 		"on a discontinuity every POI's own ZNCC missed" << endl;
 	if (!residual_ok) failures++;
 
+	//--- a failed upstream POI must not corrupt the fit near it ---
+	//plant a fake solver failure (negative StatusFlag sentinel + wildly wrong displacement,
+	//exactly what a real failed POI looks like) among the otherwise-good far-left column and
+	//confirm the residual there stays low -- before the zncc<0 gate was added, this garbage
+	//displacement would have been blended straight into the local fit for nearby pixels.
+	cout << endl << "=== A failed upstream POI must be excluded, not blended into the fit ===" << endl;
+	vector<POI2D> poi_queue_with_failure = poi_queue;
+	int corrupted_count = 0;
+	for (auto& poi : poi_queue_with_failure)
+	{
+		//a MODERATE, plausible corruption: stays within CrackResidual2D's search radius (so
+		//it's still found as a "neighbor" candidate at all -- an extreme displacement would
+		//move it out of the deformed-position KD-tree's search radius and get excluded by
+		//distance alone, which wouldn't exercise the zncc gate this test targets), but wrong
+		//enough (true left-side u is exactly 0 everywhere) to bias a fit that blends it in
+		if ((int)poi.x == x0 - 40 && (int)poi.y == 140)
+		{
+			poi.result.zncc = (float)STATUS_HESSIAN_SINGULAR; //a real solver failure sentinel
+			poi.deformation.u = 15.f; //wrong (true value is 0), but spatially still a plausible neighbor
+			poi.deformation.v = 15.f;
+			corrupted_count++;
+		}
+	}
+	cout << "  planted " << corrupted_count << " fake-failed POI at x=" << (x0 - 40) << " y=140" << endl;
+
+	CrackResidual2D crack_residual_with_failure(30.f, 6, thread_number);
+	crack_residual_with_failure.prepare(poi_queue_with_failure);
+	crack_residual_with_failure.compute(ref_img, tar_img, poi_queue_with_failure);
+	const Eigen::MatrixXf& residual_with_failure = crack_residual_with_failure.residualMap();
+
+	//check tightly around the corrupted POI's own deformed position (x0-40+15=95, y=140) --
+	//narrowly, since only ONE POI was corrupted (at one y row); averaging across every row
+	//the way the broader far-left check above does would dilute any localized effect away
+	float sum = 0.f;
+	int count = 0;
+	for (int y = 135; y <= 145; y++)
+	{
+		for (int x = 88; x <= 100; x++)
+		{
+			float r = residual_with_failure(y, x);
+			if (r >= 0.f) { sum += r; count++; }
+		}
+	}
+	float near_corrupted_poi = count > 0 ? sum / count : -1.f;
+	cout << "  mean residual right around the fake-failed POI's own position: " << near_corrupted_poi
+		<< " (" << count << " valid pixels)" << endl;
+
+	bool failure_excluded_ok = count > 0 && near_corrupted_poi < 3.f; //should stay near the ~0 baseline
+	cout << "  " << (failure_excluded_ok ? "PASS" : "FAIL")
+		<< ": the fake-failed POI's garbage displacement was excluded from the fit, not blended in" << endl;
+	if (!failure_excluded_ok) failures++;
+
 	cout << endl << (failures == 0 ? "ALL CHECKS PASSED" : "SOME CHECKS FAILED") << " (" << failures << " failure(s))" << endl;
 	return failures == 0 ? 0 : 1;
 }
