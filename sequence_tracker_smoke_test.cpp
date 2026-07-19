@@ -45,6 +45,33 @@ namespace
 			for (auto& poi : poi_queue) compute(&poi);
 		}
 	};
+
+	//deterministic stand-in used below for two targeted regressions: a per-index
+	//controllable ZNCC (to force a mix of real correlation failures and successes, for
+	//the reference-update percentile check) and a controllable displacement increment
+	//(to force a large but genuine first-frame motion, for the no-baseline check)
+	class ControlledStubSolver : public DIC
+	{
+	public:
+		std::vector<float> per_poi_zncc;
+		float u_increment = 1.f, v_increment = 0.f;
+
+		void prepare() override {}
+		void compute(POI2D* poi) override { compute_one(poi, 0); }
+
+		void compute(std::vector<POI2D>& poi_queue) override
+		{
+			for (size_t i = 0; i < poi_queue.size(); i++) compute_one(&poi_queue[i], (int)i);
+		}
+
+	private:
+		void compute_one(POI2D* poi, int index)
+		{
+			poi->deformation.u += u_increment;
+			poi->deformation.v += v_increment;
+			poi->result.zncc = index < (int)per_poi_zncc.size() ? per_poi_zncc[index] : 0.9f;
+		}
+	};
 }
 
 int main()
@@ -152,6 +179,60 @@ int main()
 		cout << "  " << (zero_ok ? "PASS" : "FAIL")
 			<< ": zncc==0 result is accepted (cumulative displacement updated), not frozen as a failure" << endl;
 		if (!zero_ok) failures++;
+	}
+
+	//--- regression: a real, large first-frame displacement must not be rejected as a
+	//"jump" -- there is no legitimate prior increment to compare it against yet ---
+	cout << endl << "=== Regression: no false jump-rejection on the first tracked frame ===" << endl;
+	{
+		vector<Image2D> two_frames = { images[0], images[1] };
+		vector<POI2D> poi_first = { POI2D(Point2D(100.f, 100.f)) };
+		ControlledStubSolver stub_solver;
+		stub_solver.u_increment = 20.f; //well above the default 8px jump tolerance
+		stub_solver.per_poi_zncc = { 0.95f };
+		SequenceTracker2D tracker;
+		tracker.setJumpTolerance(8.f);
+		auto status = tracker.compute(two_frames, poi_first, stub_solver);
+
+		bool first_frame_ok = status[0].jump_rejected_count == 0
+			&& poi_first[0].result.zncc == 0.95f && poi_first[0].deformation.u == 20.f;
+		cout << "  u=" << poi_first[0].deformation.u << " zncc=" << poi_first[0].result.zncc
+			<< " jump_rejected_count=" << status[0].jump_rejected_count << endl;
+		cout << "  " << (first_frame_ok ? "PASS" : "FAIL")
+			<< ": a genuine 20px first-frame displacement is accepted, not rejected as a jump" << endl;
+		if (!first_frame_ok) failures++;
+	}
+
+	//--- regression: the reference-update percentile must count outright correlation
+	//failures, not just the POIs that happened to succeed this frame ---
+	cout << endl << "=== Regression: reference-update percentile counts correlation failures ===" << endl;
+	{
+		vector<Image2D> two_frames = { images[0], images[1] };
+		vector<POI2D> poi_mixed;
+		for (int i = 0; i < 10; i++) poi_mixed.push_back(POI2D(Point2D(100.f + i * 10.f, 100.f)));
+
+		ControlledStubSolver stub_solver;
+		stub_solver.u_increment = 0.f; //keep displacement at zero -- isolate the percentile logic from the jump-tolerance check
+		//8 of 10 POIs fail correlation outright; only 2 succeed, well above the ZNCC
+		//threshold -- ncorr's own percentile-of-the-whole-field policy should treat this
+		//as "most of the field is failing," triggering a reference update regardless
+		stub_solver.per_poi_zncc = { (float)STATUS_MAX_ITERATIONS_REACHED, (float)STATUS_MAX_ITERATIONS_REACHED,
+			(float)STATUS_MAX_ITERATIONS_REACHED, (float)STATUS_MAX_ITERATIONS_REACHED, (float)STATUS_MAX_ITERATIONS_REACHED,
+			(float)STATUS_MAX_ITERATIONS_REACHED, (float)STATUS_MAX_ITERATIONS_REACHED, (float)STATUS_MAX_ITERATIONS_REACHED,
+			0.95f, 0.95f };
+
+		SequenceTracker2D tracker;
+		tracker.setJumpTolerance(8.f);
+		tracker.setReferenceUpdateEnabled(true);
+		tracker.setUpdateZnccThreshold(0.9f);
+		tracker.setUpdatePercentile(0.75f);
+		auto status = tracker.compute(two_frames, poi_mixed, stub_solver);
+
+		cout << "  8/10 POIs failing, 2/10 succeeding at 0.95 -- reference_updated=" << status[0].reference_updated << endl;
+		bool percentile_ok = status[0].reference_updated;
+		cout << "  " << (percentile_ok ? "PASS" : "FAIL")
+			<< ": majority correlation failures trigger a reference update despite the few high-ZNCC survivors" << endl;
+		if (!percentile_ok) failures++;
 	}
 
 	cout << endl << (failures == 0 ? "ALL CHECKS PASSED" : "SOME CHECKS FAILED") << " (" << failures << " failure(s))" << endl;

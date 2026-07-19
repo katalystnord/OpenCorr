@@ -51,6 +51,15 @@ namespace opencorr
 		std::vector<float> last_increment_u(n, 0.f), last_increment_v(n, 0.f);
 		std::vector<float> last_ux(n, 0.f), last_uy(n, 0.f), last_vx(n, 0.f), last_vy(n, 0.f);
 
+		//false whenever last_increment_u/v is a fresh 0.f reset with no real prior
+		//measurement behind it yet (before the very first tracked frame, and again for
+		//any POI immediately after a reference update re-anchors it) -- the jump-tolerance
+		//check below is a frame-to-frame CONTINUITY check (does this frame's motion look
+		//discontinuous from the last one), not a bound on absolute displacement, so it has
+		//nothing meaningful to compare against yet in either case and must not reject
+		//whatever the true first-frame-against-this-reference displacement happens to be
+		std::vector<bool> has_baseline(n, false);
+
 		for (int i = 0; i < n; i++)
 		{
 			ref_x[i] = poi_queue[i].x;
@@ -115,7 +124,7 @@ namespace opencorr
 				float jump = std::sqrt(std::pow(working[i].deformation.u - last_increment_u[i], 2)
 					+ std::pow(working[i].deformation.v - last_increment_v[i], 2));
 
-				if (jump > jump_tolerance)
+				if (has_baseline[i] && jump > jump_tolerance)
 				{
 					status.jump_rejected_count++;
 					poi_queue[i].result = working[i].result;
@@ -129,6 +138,7 @@ namespace opencorr
 				last_uy[i] = working[i].deformation.uy;
 				last_vx[i] = working[i].deformation.vx;
 				last_vy[i] = working[i].deformation.vy;
+				has_baseline[i] = true;
 
 				poi_queue[i].deformation.u = cumulative_u[i] + last_increment_u[i];
 				poi_queue[i].deformation.v = cumulative_v[i] + last_increment_v[i];
@@ -141,10 +151,16 @@ namespace opencorr
 			//expressed in OpenCorr's higher-is-better ZNCC convention
 			if (reference_update_enabled)
 			{
+				//every POI counts toward the trigger, including outright correlation
+				//failures (their raw negative StatusFlag sentinel sorts below any realistic
+				//update_zncc_threshold on its own) -- ncorr's own percentile is a quality
+				//census of the WHOLE field, and dropping failures here would bias the
+				//computed percentile upward exactly when many POIs failing is the clearest
+				//signal that the reference has drifted too far and needs updating
 				std::vector<float> zncc_values;
 				zncc_values.reserve(n);
 				for (int i = 0; i < n; i++)
-					if (working[i].result.zncc >= 0.f) zncc_values.push_back(working[i].result.zncc);
+					zncc_values.push_back(working[i].result.zncc);
 
 				if (!zncc_values.empty())
 				{
@@ -179,6 +195,10 @@ namespace opencorr
 							cumulative_v[i] += last_increment_v[i];
 							last_increment_u[i] = 0.f;
 							last_increment_v[i] = 0.f;
+							//no real prior increment against the NEW reference yet -- same
+							//reasoning as the initial state before frame 1, see has_baseline's
+							//own declaration above
+							has_baseline[i] = false;
 							//shape-gradient terms (last_ux/uy/vx/vy) are left as continuity
 							//hints for the next frame, not reset -- the deformation itself
 							//doesn't discontinue just because the reference frame does
