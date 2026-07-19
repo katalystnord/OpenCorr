@@ -9,10 +9,12 @@ comment back to this file rather than repeating the full text in every
 location; see each such file's own header comment for exactly what was
 ported from where.
 
-A third project, `dicengine/hypercine`, is vendored verbatim (not ported)
-under `deps/hypercine/` -- its BSD-3-Clause notice is already carried
-in full in every file there and in `deps/hypercine/LICENSE`, so it is not
-repeated below.
+A third project, `dicengine/hypercine`, is vendored under `deps/hypercine/`
+(with a small set of defensive-hardening patches on top of the original --
+see `hypercine.cpp`'s own history for specifics -- not a fork of its design
+or algorithms) -- its BSD-3-Clause notice is already carried in full in
+every file there and in `deps/hypercine/LICENSE`, so it is not repeated
+below.
 
 ## DICe (dicengine/dice)
 
