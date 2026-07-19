@@ -138,7 +138,7 @@ namespace opencorr
 			|| location.x >= width - 2 || location.y >= height - 2
 			|| std::isnan(location.x) || std::isnan(location.y))
 		{
-			value = -1.f;
+			value = OUT_OF_BOUNDS;
 		}
 		else
 		{
@@ -357,7 +357,7 @@ namespace opencorr
 			|| location.x >= dim_x - 2 || location.y >= dim_y - 2 || location.z >= dim_z - 2
 			|| std::isnan(location.x) || std::isnan(location.y) || std::isnan(location.z))
 		{
-			value = -1.f;
+			value = OUT_OF_BOUNDS;
 		}
 		else
 		{

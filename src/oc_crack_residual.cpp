@@ -189,7 +189,7 @@ namespace opencorr
 
 				Point2D source_location(x_loc, y_loc);
 				float predicted = ref_interp.compute(source_location);
-				if (predicted == -1.f)
+				if (predicted == BicubicBspline::OUT_OF_BOUNDS)
 				{
 					continue; //predicted source location falls outside the reference image
 				}

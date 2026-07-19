@@ -64,8 +64,10 @@ namespace opencorr
 	//Known limitation -- AutoROI always returns a single simple polygon (the largest
 	//connected speckled region). It cannot represent a specimen with two or more disjoint
 	//speckled patches (a second patch is silently discarded, not flagged), or a hole/void in
-	//the middle of the region (Polygon2D has no interior-ring support). A future multi-region/
-	//hole-aware result would need a composite-shape sibling to Polygon2D, not a change here.
+	//the middle of the region. RegionWithHoles2D (oc_shape.h, issue #15) is now exactly the
+	//composite-shape sibling to Polygon2D this would need for the hole case, but detect()
+	//itself still only ever returns a bare Polygon2D -- lifting it to actually detect and
+	//return holes (not just widen the return type) is still a future change, not done here.
 	//
 	//Image2D keeps two representations (cv_mat, eg_mat) that are only synchronized inside
 	//load(); computeGradientMaps() re-derives eg_mat from cv_mat itself (via cv::cv2eigen)

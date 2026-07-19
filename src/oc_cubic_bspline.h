@@ -58,6 +58,12 @@ namespace opencorr
 		};
 
 	public:
+		//sentinel returned by compute() for a location too close to the image border for the
+		//interpolation stencil, or NaN -- named so callers comparing against it (e.g.
+		//CrackResidual2D) reference this constant instead of a bare literal that would
+		//silently drift out of sync with compute()'s own value
+		static constexpr float OUT_OF_BOUNDS = -1.f;
+
 		BicubicBspline(Image2D& image);
 		~BicubicBspline();
 
@@ -90,6 +96,9 @@ namespace opencorr
 		};
 
 	public:
+		//see BicubicBspline::OUT_OF_BOUNDS above -- same convention, 3D counterpart
+		static constexpr float OUT_OF_BOUNDS = -1.f;
+
 		TricubicBspline(Image3D& image);
 		~TricubicBspline();
 
