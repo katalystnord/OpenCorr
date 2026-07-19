@@ -14,6 +14,7 @@
 
 #include <fstream>
 #include <iomanip>
+#include <limits>
 
 #include "oc_io.h"
 
@@ -89,7 +90,13 @@ namespace opencorr
 			position2 = data_line.find(delimiter, position1);
 			if (position2 == std::string::npos)
 			{
-				std::cerr << "failed to read POI at line: " << point_number << std::endl;
+				//no delimiter at all -- can't parse two fields from this line. Previously fell
+				//through anyway: position1 = npos + delimiter.length() wraps around (size_t
+				//arithmetic) to some other, not-necessarily-out-of-range value, so the second
+				//substr() below could silently misparse content from the wrong offset instead
+				//of failing cleanly.
+				std::cerr << "skipping malformed row (no delimiter found) at line: " << point_number << std::endl;
+				continue;
 			}
 
 			variable = data_line.substr(position1, position2 - position1);
@@ -104,6 +111,12 @@ namespace opencorr
 			if (!variable.empty())
 			{
 				key_buffer.push_back(std::stof(variable));
+			}
+
+			if (key_buffer.size() < 2)
+			{
+				std::cerr << "skipping malformed row (too few fields) at line: " << point_number << std::endl;
+				continue;
 			}
 
 			float x = key_buffer[0];
@@ -283,6 +296,15 @@ namespace opencorr
 				position1 = position2 + delimiter.length();
 			} while (position2 < data_line.length() && position1 < data_line.length());
 
+			//a blank line, a row with a missing/stray delimiter, or a truncated file previously
+			//indexed key_buffer[0]/[1]/etc. with no size check at all -- undefined behavior
+			//(garbage values, or a crash) instead of a clean, reported skip
+			if (key_buffer.size() < 4)
+			{
+				std::cerr << "skipping malformed row (too few fields): " << data_line << std::endl;
+				continue;
+			}
+
 			float x = key_buffer[0];
 			float y = key_buffer[1];
 			POI2D current_POI(x, y);
@@ -300,6 +322,17 @@ namespace opencorr
 			int array_size = (int)key_buffer.size() - current_index - strain_size - 2;
 			if (array_size > max_result_size) array_size = max_result_size;
 			if (array_size < 0) array_size = 0;
+
+			//the clamp above only protects the result.r loop itself -- it doesn't guarantee
+			//enough fields remain for the strain/subset_radius reads that follow, which
+			//previously ran unconditionally regardless of how short (or how mis-clamped) the
+			//row actually was
+			if ((int)key_buffer.size() < current_index + array_size + strain_size + 2)
+			{
+				std::cerr << "skipping malformed/truncated row (fewer fields than its own inferred width implies): " << data_line << std::endl;
+				continue;
+			}
+
 			for (int i = 0; i < array_size; i++)
 			{
 				current_POI.result.r[i] = key_buffer[current_index + i];
@@ -437,6 +470,78 @@ namespace opencorr
 		file_out.close();
 	}
 
+	std::vector<POI2D> IO2D::loadDeformationTable2D()
+	{
+		//counterpart to saveDeformationTable2D() (see oc_io.h) -- reads back x, y, the full
+		//12-component deformation vector, and subset_radius, matching that function's own
+		//column layout exactly
+		std::ifstream file_in(file_path);
+		if (!file_in.is_open())
+		{
+			std::cerr << "failed to read file " << file_path << std::endl;
+		}
+
+		std::string data_line;
+		getline(file_in, data_line);
+		std::vector<POI2D> poi_queue;
+		size_t position1, position2;
+		std::string variable;
+		std::vector<float> key_buffer;
+
+		while (getline(file_in, data_line))
+		{
+			position1 = 0;
+			position2 = 0;
+			std::vector<float>().swap(key_buffer);
+			do
+			{
+				position2 = data_line.find(delimiter, position1);
+				if (position2 == std::string::npos)
+				{
+					position2 = data_line.length();
+				}
+
+				variable = data_line.substr(position1, position2 - position1);
+				if (!variable.empty())
+				{
+					key_buffer.push_back(std::stof(variable));
+				}
+
+				position1 = position2 + delimiter.length();
+			} while (position2 < data_line.length() && position1 < data_line.length());
+
+			POI2D size_probe(0.f, 0.f);
+			size_t min_fields = 2 //x, y
+				+ sizeof(size_probe.deformation.p) / sizeof(size_probe.deformation.p[0])
+				+ 2; //subset_radius
+			if (key_buffer.size() < min_fields)
+			{
+				std::cerr << "skipping malformed row (too few fields): " << data_line << std::endl;
+				continue;
+			}
+
+			float x = key_buffer[0];
+			float y = key_buffer[1];
+			POI2D current_POI(x, y);
+
+			int current_index = 2;
+			int array_size = (int)(sizeof(current_POI.deformation.p) / sizeof(current_POI.deformation.p[0]));
+			for (int i = 0; i < array_size; i++)
+			{
+				current_POI.deformation.p[i] = key_buffer[current_index + i];
+			}
+
+			current_index += array_size;
+			current_POI.subset_radius.x = key_buffer[current_index];
+			current_POI.subset_radius.y = key_buffer[current_index + 1];
+
+			poi_queue.push_back(current_POI);
+		}
+		file_in.close();
+
+		return poi_queue;
+	}
+
 	void IO2D::saveMap2D(std::vector<POI2D>& poi_queue, OutputVariable variable)
 	{
 		int height = getHeight();
@@ -503,6 +608,23 @@ namespace opencorr
 			return;
 		}
 
+		//a failed POI's result.zncc is one of the solvers' own StatusFlag failure sentinels
+		//(oc_dic.h), not a real correlation value -- if the correlation itself failed, NONE of
+		//that POI's fields are trustworthy, whichever `variable` was requested. Overwriting
+		//with NaN (rather than leaving the raw sentinel, e.g. -8) matters specifically for this
+		//map/raster export: a viewer (ParaView, or any tool coloring this as a heatmap) would
+		//otherwise render a failure as if it were a real, very-poor-but-genuine correlation,
+		//skewing any color scale or statistic computed over the map. NaN is the raster
+		//convention such tools already treat as "no data" -- 0 isn't safe here since it's
+		//already this map's own "no POI was ever placed at this pixel" default.
+		for (size_t i = 0; i < poi_queue.size(); i++)
+		{
+			if (poi_queue[i].result.zncc < 0.f)
+			{
+				output_map((int)poi_queue[i].y, (int)poi_queue[i].x) = std::numeric_limits<float>::quiet_NaN();
+			}
+		}
+
 		std::ofstream file_out(file_path);
 		file_out.setf(std::ios::fixed);
 		file_out << std::setprecision(8);
@@ -556,6 +678,19 @@ namespace opencorr
 
 				position1 = position2 + delimiter.length();
 			} while (position2 < data_line.length() && position1 < data_line.length());
+
+			POI2DS size_probe(0.f, 0.f);
+			size_t min_fields = 2
+				+ sizeof(size_probe.deformation.p) / sizeof(size_probe.deformation.p[0])
+				+ sizeof(size_probe.result.r) / sizeof(size_probe.result.r[0])
+				+ 6 //ref_coor + tar_coor
+				+ sizeof(size_probe.strain.e) / sizeof(size_probe.strain.e[0])
+				+ 2; //subset_radius
+			if (key_buffer.size() < min_fields)
+			{
+				std::cerr << "skipping malformed row (too few fields): " << data_line << std::endl;
+				continue;
+			}
 
 			float x = key_buffer[0];
 			float y = key_buffer[1];
@@ -769,6 +904,18 @@ namespace opencorr
 			return;
 		}
 
+		//see saveMap2D's own comment on why this matters -- a POI2DS carries three
+		//independent ZNCC values (one per matching stage: r1-r2 stereo, r1-t1 temporal,
+		//r1-t2 stereo); if ANY of them failed, none of this POI's fields (whichever
+		//`variable` was requested) are trustworthy, so the whole cell becomes NaN
+		for (size_t i = 0; i < poi_queue.size(); i++)
+		{
+			if (poi_queue[i].result.r1r2_zncc < 0.f || poi_queue[i].result.r1t1_zncc < 0.f || poi_queue[i].result.r1t2_zncc < 0.f)
+			{
+				output_map((int)poi_queue[i].y, (int)poi_queue[i].x) = std::numeric_limits<float>::quiet_NaN();
+			}
+		}
+
 		std::ofstream file_out(file_path);
 		file_out.setf(std::ios::fixed);
 		file_out << std::setprecision(8);
@@ -897,6 +1044,12 @@ namespace opencorr
 					key_buffer.push_back(std::stof(variable));
 				}
 
+				if (key_buffer.size() < 3)
+				{
+					std::cerr << "skipping malformed row (too few fields) at line: " << point_number << std::endl;
+					continue;
+				}
+
 				float x = key_buffer[0];
 				float y = key_buffer[1];
 				float z = key_buffer[2];
@@ -970,6 +1123,19 @@ namespace opencorr
 
 				position1 = position2 + delimiter.length();
 			} while (position2 < data_line.length() && position1 < data_line.length());
+
+			POI3D size_probe(0.f, 0.f, 0.f);
+			size_t min_fields = 3 //x, y, z
+				+ 3 //u, v, w
+				+ sizeof(size_probe.result.r) / sizeof(size_probe.result.r[0])
+				+ 9 //ux, uy, uz, vx, vy, vz, wx, wy, wz
+				+ sizeof(size_probe.strain.e) / sizeof(size_probe.strain.e[0])
+				+ 3; //subset_radius
+			if (key_buffer.size() < min_fields)
+			{
+				std::cerr << "skipping malformed row (too few fields): " << data_line << std::endl;
+				continue;
+			}
 
 			float x = key_buffer[0];
 			float y = key_buffer[1];
@@ -1194,6 +1360,15 @@ namespace opencorr
 			return;
 		}
 
+		//see IO2D::saveMap2D's own comment on why this matters
+		for (int i = 0; i < queue_length; i++)
+		{
+			if (poi_queue[i].result.zncc < 0.f)
+			{
+				output_map[(int)poi_queue[i].z][(int)poi_queue[i].y][(int)poi_queue[i].x] = std::numeric_limits<float>::quiet_NaN();
+			}
+		}
+
 		std::ofstream file_out(file_path);
 		file_out.setf(std::ios::fixed);
 		file_out << std::setprecision(8);
@@ -1264,15 +1439,31 @@ namespace opencorr
 
 	std::vector<POI3D> IO3D::loadMatrixBin()
 	{
-		std::ifstream file_in(file_path);
+		std::vector<POI3D> poi_queue;
+
+		//opened in binary mode to match saveMatrixBin's own std::ios::binary write -- opening
+		//in text mode (as this previously did) performs CRLF/LF translation on the raw
+		//float/int bytes on Windows, corrupting any byte that happens to match a newline code,
+		//silently returning wrong coordinates/displacements
+		std::ifstream file_in(file_path, std::ios::in | std::ios::binary);
 		if (!file_in.is_open())
 		{
 			std::cerr << "failed to open file " << file_path << std::endl;
+			return poi_queue; //previously fell through to read() on a closed stream instead
 		}
 
-		//read head information
+		//read head information, validating the read actually succeeded and queue_length is
+		//sane before trusting it to size an allocation -- a missing/truncated file previously
+		//read head_info from an unread/garbage buffer, and a resulting negative or absurdly
+		//large queue_length fed straight into `new float[data_length]` (std::bad_array_new_length
+		//or an out-of-memory crash instead of a clean, empty result)
 		int head_info[4];
 		file_in.read((char*)head_info, sizeof(head_info[0]) * 4);
+		if (!file_in.good() || head_info[0] < 0)
+		{
+			std::cerr << "failed to read a valid header from file " << file_path << std::endl;
+			return poi_queue;
+		}
 		int queue_length = head_info[0];
 		setDimX(head_info[1]);
 		setDimY(head_info[2]);
@@ -1280,11 +1471,15 @@ namespace opencorr
 
 		int result_length = 8;
 		int data_length = result_length * queue_length;
-		float* data_array = new float[data_length];
-		file_in.read((char*)data_array, sizeof(float) * data_length);
+		std::vector<float> data_array(data_length);
+		file_in.read((char*)data_array.data(), sizeof(float) * data_length);
+		if ((size_t)file_in.gcount() != sizeof(float) * data_length)
+		{
+			std::cerr << "file " << file_path << " is truncated relative to its own header" << std::endl;
+			return poi_queue;
+		}
 		file_in.close();
 
-		std::vector<POI3D> poi_queue;
 		POI3D empty_poi(0, 0, 0);
 		poi_queue.resize(queue_length, empty_poi);
 
@@ -1299,8 +1494,6 @@ namespace opencorr
 			poi_queue[i].result.zncc = data_array[i * result_length + 6];
 			poi_queue[i].result.convergence = data_array[i * result_length + 7];
 		}
-
-		delete[] data_array;
 
 		return poi_queue;
 	}

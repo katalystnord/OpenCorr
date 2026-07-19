@@ -89,6 +89,12 @@ namespace opencorr
 		void saveTable2D(std::vector<POI2D>& poi_queue);
 		void saveDeformationTable2D(std::vector<POI2D>& poi_queue);
 
+		//counterpart to saveDeformationTable2D() -- previously had no way to load back the full
+		//12-component deformation vector (ux,uy,uxx,uxy,uyy,vx,vy,vxx,vxy,vyy were saved but
+		//could never be reloaded through this API; loadTable2D() only round-trips u/v, which
+		//is all saveTable2D() itself ever wrote, so that pairing was already self-consistent)
+		std::vector<POI2D> loadDeformationTable2D();
+
 		//variable could be referred to enum OutputVariable
 		void saveMap2D(std::vector<POI2D>& poi_queue, OutputVariable variable);
 
