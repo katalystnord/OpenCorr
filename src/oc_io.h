@@ -39,7 +39,11 @@ namespace opencorr
 		deformation_increment = 13, //convergence
 		iteration_step = 14, //stop
 		feature_nearby = 15, //SIFT feature
-		u_x = 16, //displacement gradient
+		//displacement gradients -- handled by saveMap2D (u_x, u_y, v_x, v_y only -- POI2D
+		//has no z-component) and saveMap3D (all nine); NOT handled by saveMap2DS, since
+		//POI2DS's own deformation (DisplacementVector3D) stores only u/v/w, no gradient
+		//terms at all -- requesting one of these from saveMap2DS is a silent no-op
+		u_x = 16,
 		u_y = 17,
 		u_z = 18,
 		v_x = 19,

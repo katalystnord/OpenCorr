@@ -1,3 +1,4 @@
+#include <cstdio>
 #include <fstream>
 #include <iostream>
 #include "opencorr.h"
@@ -146,6 +147,36 @@ int main()
 	cout << "row for y=1: " << (map_lines.size() > 1 ? map_lines[1] : "<missing>") << endl;
 	cout << (map_ok ? "PASS" : "FAIL") << ": failed POI's sentinel becomes NaN in the map, not a raw -8 next to real values" << endl;
 	if (!map_ok) failures++;
+
+	// --- saveMap2D/saveMap3D: displacement-gradient OutputVariable codes (u_x etc.) must
+	// actually be written, not silently no-op through the switch's default case ---
+	good_poi.deformation.ux = 3.25f; //nonzero and distinct from the map's own 0.0 default,
+	map_queue[0] = good_poi;         //so "wrote the real value" is distinguishable from "no-op"
+	remove("/tmp/oc_io_map.csv"); //a stale file from an earlier run must not fake a PASS
+	io_map.saveMap2D(map_queue, u_x);
+	ifstream map_ux_file("/tmp/oc_io_map.csv");
+	vector<string> map_ux_lines;
+	string map_ux_line;
+	while (getline(map_ux_file, map_ux_line)) map_ux_lines.push_back(map_ux_line);
+	bool map_2d_ux_ok = map_ux_lines.size() > 1 && map_ux_lines[1].find("3.25") != string::npos;
+	cout << (map_2d_ux_ok ? "PASS" : "FAIL") << ": saveMap2D(u_x) writes the displacement gradient, not a silent no-op" << endl;
+	if (!map_2d_ux_ok) failures++;
+
+	POI3D map3d_poi(1.f, 1.f, 1.f);
+	map3d_poi.result.zncc = 0.9f;
+	map3d_poi.deformation.ux = 4.75f;
+	vector<POI3D> map3d_queue = { map3d_poi };
+	IO3D io_map3d;
+	io_map3d.setDelimiter(",");
+	io_map3d.setDimX(4); io_map3d.setDimY(4); io_map3d.setDimZ(4);
+	io_map3d.setPath("/tmp/oc_io_map3d.csv");
+	remove("/tmp/oc_io_map3d.csv"); //a stale file from an earlier run must not fake a PASS
+	io_map3d.saveMap3D(map3d_queue, u_x);
+	ifstream map3d_file("/tmp/oc_io_map3d.csv");
+	string map3d_contents((istreambuf_iterator<char>(map3d_file)), istreambuf_iterator<char>());
+	bool map_3d_ux_ok = map3d_contents.find("4.75") != string::npos;
+	cout << (map_3d_ux_ok ? "PASS" : "FAIL") << ": saveMap3D(u_x) writes the displacement gradient, not a silent no-op" << endl;
+	if (!map_3d_ux_ok) failures++;
 
 	// --- saveMatrixBin/loadMatrixBin: binary mode must match, and a malformed/truncated
 	// file must return an empty queue instead of crashing ---

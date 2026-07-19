@@ -604,6 +604,30 @@ namespace opencorr
 				output_map((int)poi_queue[i].y, (int)poi_queue[i].x) = poi_queue[i].strain.exy;
 			}
 			break;
+		case u_x: //displacement gradient du/dx
+			for (int i = 0; i < poi_queue.size(); i++)
+			{
+				output_map((int)poi_queue[i].y, (int)poi_queue[i].x) = poi_queue[i].deformation.ux;
+			}
+			break;
+		case u_y: //displacement gradient du/dy
+			for (int i = 0; i < poi_queue.size(); i++)
+			{
+				output_map((int)poi_queue[i].y, (int)poi_queue[i].x) = poi_queue[i].deformation.uy;
+			}
+			break;
+		case v_x: //displacement gradient dv/dx
+			for (int i = 0; i < poi_queue.size(); i++)
+			{
+				output_map((int)poi_queue[i].y, (int)poi_queue[i].x) = poi_queue[i].deformation.vx;
+			}
+			break;
+		case v_y: //displacement gradient dv/dy
+			for (int i = 0; i < poi_queue.size(); i++)
+			{
+				output_map((int)poi_queue[i].y, (int)poi_queue[i].x) = poi_queue[i].deformation.vy;
+			}
+			break;
 		default:
 			return;
 		}
@@ -1354,6 +1378,60 @@ namespace opencorr
 			for (int i = 0; i < queue_length; i++)
 			{
 				output_map[(int)poi_queue[i].z][(int)poi_queue[i].y][(int)poi_queue[i].x] = poi_queue[i].strain.ezx;
+			}
+			break;
+		case u_x: //displacement gradient du/dx
+			for (int i = 0; i < queue_length; i++)
+			{
+				output_map[(int)poi_queue[i].z][(int)poi_queue[i].y][(int)poi_queue[i].x] = poi_queue[i].deformation.ux;
+			}
+			break;
+		case u_y: //displacement gradient du/dy
+			for (int i = 0; i < queue_length; i++)
+			{
+				output_map[(int)poi_queue[i].z][(int)poi_queue[i].y][(int)poi_queue[i].x] = poi_queue[i].deformation.uy;
+			}
+			break;
+		case u_z: //displacement gradient du/dz
+			for (int i = 0; i < queue_length; i++)
+			{
+				output_map[(int)poi_queue[i].z][(int)poi_queue[i].y][(int)poi_queue[i].x] = poi_queue[i].deformation.uz;
+			}
+			break;
+		case v_x: //displacement gradient dv/dx
+			for (int i = 0; i < queue_length; i++)
+			{
+				output_map[(int)poi_queue[i].z][(int)poi_queue[i].y][(int)poi_queue[i].x] = poi_queue[i].deformation.vx;
+			}
+			break;
+		case v_y: //displacement gradient dv/dy
+			for (int i = 0; i < queue_length; i++)
+			{
+				output_map[(int)poi_queue[i].z][(int)poi_queue[i].y][(int)poi_queue[i].x] = poi_queue[i].deformation.vy;
+			}
+			break;
+		case v_z: //displacement gradient dv/dz
+			for (int i = 0; i < queue_length; i++)
+			{
+				output_map[(int)poi_queue[i].z][(int)poi_queue[i].y][(int)poi_queue[i].x] = poi_queue[i].deformation.vz;
+			}
+			break;
+		case w_x: //displacement gradient dw/dx
+			for (int i = 0; i < queue_length; i++)
+			{
+				output_map[(int)poi_queue[i].z][(int)poi_queue[i].y][(int)poi_queue[i].x] = poi_queue[i].deformation.wx;
+			}
+			break;
+		case w_y: //displacement gradient dw/dy
+			for (int i = 0; i < queue_length; i++)
+			{
+				output_map[(int)poi_queue[i].z][(int)poi_queue[i].y][(int)poi_queue[i].x] = poi_queue[i].deformation.wy;
+			}
+			break;
+		case w_z: //displacement gradient dw/dz
+			for (int i = 0; i < queue_length; i++)
+			{
+				output_map[(int)poi_queue[i].z][(int)poi_queue[i].y][(int)poi_queue[i].x] = poi_queue[i].deformation.wz;
 			}
 			break;
 		default:
