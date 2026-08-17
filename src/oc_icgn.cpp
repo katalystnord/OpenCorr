@@ -290,7 +290,7 @@ namespace opencorr
 			//cost below as if they were real intensities instead of being rejected.
 			if ((icgn->tar_subset->eg_mat.array() < 0.f).any())
 			{
-				poi->result.zncc = -3.f;
+				poi->result.zncc = (float)STATUS_INVALID_SUBSET_OR_GUESS;
 				return;
 			}
 
@@ -504,7 +504,7 @@ namespace opencorr
 			//see the comment on the equivalent check in ICGN2D1::compute(POI2D*) above
 			if ((icgn->tar_subset->eg_mat.array() < 0.f).any())
 			{
-				poi->result.zncc = -3.f;
+				poi->result.zncc = (float)STATUS_INVALID_SUBSET_OR_GUESS;
 				return;
 			}
 
@@ -847,7 +847,7 @@ namespace opencorr
 			//see the comment on the equivalent check in ICGN2D1::compute(POI2D*) above
 			if ((icgn->tar_subset->eg_mat.array() < 0.f).any())
 			{
-				poi->result.zncc = -3.f;
+				poi->result.zncc = (float)STATUS_INVALID_SUBSET_OR_GUESS;
 				return;
 			}
 
@@ -1084,7 +1084,7 @@ namespace opencorr
 			//see the comment on the equivalent check in ICGN2D1::compute(POI2D*) above
 			if ((icgn->tar_subset->eg_mat.array() < 0.f).any())
 			{
-				poi->result.zncc = -3.f;
+				poi->result.zncc = (float)STATUS_INVALID_SUBSET_OR_GUESS;
 				return;
 			}
 			float tar_mean_norm = icgn->tar_subset->zeroMeanNorm();
@@ -1458,7 +1458,7 @@ namespace opencorr
 			}
 			if (tar_subset_out_of_range)
 			{
-				poi->result.zncc = -3.f;
+				poi->result.zncc = (float)STATUS_INVALID_SUBSET_OR_GUESS;
 				return;
 			}
 			float tar_mean_norm = icgn->tar_subset->zeroMeanNorm();
