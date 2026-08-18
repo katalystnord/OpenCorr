@@ -1,0 +1,66 @@
+name: smoke tests
+
+# The fork's own gate, independent of any consumer.
+#
+# This repository is a working fork: capability work lands here first and
+# SurView pins a commit of it. Until now the only thing that ran these twenty
+# tests was somebody remembering to, on one machine, after building them by
+# hand -- which is how the suite came to be reported as passing on the strength
+# of a single test.
+#
+# Upstream (vincentjzy/OpenCorr) has no CI of its own; this covers the fork's
+# own branches only and makes no claim about upstream's.
+
+on:
+  push:
+    branches: [surview-dev]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  smoke:
+    name: build + smoke tests
+    runs-on: ubuntu-latest
+    # The full suite is a little over eight minutes locally, and the two long
+    # poles (uncertainty, sequence_tracker) are genuine computation rather than
+    # waiting; a slower runner needs room.
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        # FFTW's HEADERS are a hard build requirement, not just the runtime
+        # libs: without them oc_fftcc.cpp and oc_phase_correlation.cpp fail to
+        # compile, and with them every smoke test, since all of them include the
+        # opencorr.h umbrella that pulls in oc_fftcc.h.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            ninja-build cmake g++ \
+            libopencv-dev libeigen3-dev libfftw3-dev libnanoflann-dev libomp-dev
+
+      - name: Configure
+        run: cmake -S . -B build -G Ninja -DOPENCORR_BUILD_SMOKE_TEST=ON
+
+      - name: Build
+        run: cmake --build build
+
+      - name: Run the smoke tests
+        run: ctest --test-dir build --output-on-failure
+
+      - name: Check the tree is clean afterwards
+        # Some tests write output beside the example data. Anything they leave
+        # behind must be ignored deliberately, not discovered later as a dirty
+        # working tree -- that is how a generated 28k-line CSV nearly got
+        # committed as if it were source.
+        run: |
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "The test run left the working tree dirty:"
+            git status --porcelain
+            echo "Ignore these deliberately in .gitignore, or stop writing them."
+            exit 1
+          fi
