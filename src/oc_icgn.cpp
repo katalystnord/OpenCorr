@@ -94,7 +94,26 @@ namespace opencorr
 			const float observable_floor =
 				largest_diagonal * (float)n * std::numeric_limits<float>::epsilon();
 
-			Eigen::Matrix<float, MatrixT::RowsAtCompileTime, 1> scale(n);
+			//⚑ Eigen::DontAlign on the locals below, and it is not cosmetic.
+			//
+			//A fixed-size Eigen type whose size is a multiple of 16 bytes is
+			//vectorizable and carries an over-alignment requirement -- for the
+			//second-order Hessian that is 12x12 floats, 576 bytes, wanting 32-byte
+			//alignment. compute() runs inside an OpenMP parallel region, and a worker
+			//thread's stack is not guaranteed to satisfy that, so an aligned
+			//fixed-size local can trip Eigen's own assertion and abort the process.
+			//That is not theoretical: it passed on the machine it was written on and
+			//aborted with SIGABRT on a CI runner, in ICGN2D2 only, because 12x12 is
+			//the size that is vectorizable and 6x6 (144 bytes) is not.
+			//
+			//DontAlign removes the requirement. The cost is some vectorization on a
+			//matrix of at most twelve rows, which is nothing next to aborting.
+			typedef Eigen::Matrix<float, MatrixT::RowsAtCompileTime,
+				MatrixT::ColsAtCompileTime, Eigen::DontAlign> UnalignedMatrix;
+			typedef Eigen::Matrix<float, MatrixT::RowsAtCompileTime, 1,
+				Eigen::DontAlign> UnalignedVector;
+
+			UnalignedVector scale(n);
 			for (int i = 0; i < n; i++)
 			{
 				const float diagonal = hessian(i, i);
@@ -105,9 +124,11 @@ namespace opencorr
 				scale(i) = 1.f / std::sqrt(diagonal);
 			}
 
-			MatrixT equilibrated = scale.asDiagonal() * hessian * scale.asDiagonal();
+			UnalignedMatrix equilibrated = scale.asDiagonal() * hessian * scale.asDiagonal();
 
-			Eigen::PartialPivLU<MatrixT> lu(equilibrated);
+			//The decomposition holds a matrix of its own, so it is built on the
+			//unaligned type too rather than reintroducing the same hazard.
+			Eigen::PartialPivLU<UnalignedMatrix> lu(equilibrated);
 			if (lu.rcond() < 1.0e2f * std::numeric_limits<float>::epsilon())
 			{
 				return false;
