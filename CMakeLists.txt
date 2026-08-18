@@ -9,6 +9,24 @@ find_package(OpenMP REQUIRED)
 find_package(Eigen3 REQUIRED)
 
 file(GLOB OPENCORR_SOURCES "src/*.cpp")
+# Coverage instrumentation, for tools/coverage.sh.
+#
+# ⚑ This block must stay ABOVE add_library() below. add_compile_options() only
+# affects targets created after it, and when this sat further down the library
+# was built uninstrumented while only the smoke tests were -- so gcovr reported
+# "100% of 83 lines", which is the headers and nothing else. A coverage number
+# that is impossibly high is a measurement fault, not a result. Off by default and built into
+# a separate directory: --coverage changes the object code, so measuring what the
+# tests reach and producing the library anyone links are different jobs.
+option(OPENCORR_COVERAGE "Build with gcov instrumentation (see tools/coverage.sh)" OFF)
+if(OPENCORR_COVERAGE)
+    # -O0 so line and branch counts correspond to the source as written; an
+    # optimised build merges and elides lines, and the report then describes
+    # something the reader cannot point at.
+    add_compile_options(--coverage -O0 -g)
+    add_link_options(--coverage)
+endif()
+
 add_library(opencorr STATIC ${OPENCORR_SOURCES} deps/hypercine/hypercine.cpp)
 
 # OpenCorr's headers use `#include <Eigen>` (the umbrella header with no

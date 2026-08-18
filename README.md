@@ -19,7 +19,7 @@ Users can also access the information of OpenCorr via website [opencorr.org](htt
 # About this fork
 
 This is [SurView DIC](https://github.com/katalystnord/SurView)'s engine
-fork of OpenCorr — everything below this section is Dr. Jiang's original
+fork of OpenCorr - everything below this section is Dr. Jiang's original
 upstream README, kept as-is.
 
 - **`main`** tracks upstream (`vincentjzy/OpenCorr`) as a clean, unmodified
@@ -35,14 +35,14 @@ upstream README, kept as-is.
 
 Modules added on `surview-dev` so far:
 
-- Uncertainty quantification (sigma/beta metrics) — [#2](https://github.com/katalystnord/OpenCorr/issues/2)
-- Checkerboard camera calibration solve + stereo epipolar quality metric — [#3](https://github.com/katalystnord/OpenCorr/issues/3)
-- `.cine` high-speed-camera file I/O — [#4](https://github.com/katalystnord/OpenCorr/issues/4)
-- Gradient-free (Nelder-Mead simplex) matching — [#5](https://github.com/katalystnord/OpenCorr/issues/5)
-- Phase-correlation initializer — [#6](https://github.com/katalystnord/OpenCorr/issues/6)
-- RG-DIC seed-propagation flood-fill — [#7](https://github.com/katalystnord/OpenCorr/issues/7)
-- Sequence/reference-update tracking — [#8](https://github.com/katalystnord/OpenCorr/issues/8)
-- Conformal/arbitrary subset shapes (data model, phase 1) — [#9](https://github.com/katalystnord/OpenCorr/issues/9)
+- Uncertainty quantification (sigma/beta metrics) - [#2](https://github.com/katalystnord/OpenCorr/issues/2)
+- Checkerboard camera calibration solve + stereo epipolar quality metric - [#3](https://github.com/katalystnord/OpenCorr/issues/3)
+- `.cine` high-speed-camera file I/O - [#4](https://github.com/katalystnord/OpenCorr/issues/4)
+- Gradient-free (Nelder-Mead simplex) matching - [#5](https://github.com/katalystnord/OpenCorr/issues/5)
+- Phase-correlation initializer - [#6](https://github.com/katalystnord/OpenCorr/issues/6)
+- RG-DIC seed-propagation flood-fill - [#7](https://github.com/katalystnord/OpenCorr/issues/7)
+- Sequence/reference-update tracking - [#8](https://github.com/katalystnord/OpenCorr/issues/8)
+- Conformal/arbitrary subset shapes (data model, phase 1) - [#9](https://github.com/katalystnord/OpenCorr/issues/9)
 
 Two small, generically-useful fixes found during this work were also
 submitted upstream directly, independent of the fork:
