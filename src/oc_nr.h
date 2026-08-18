@@ -37,6 +37,11 @@ namespace opencorr
 		Eigen::MatrixXf error_img;
 		Matrix6f hessian;
 		Matrix6f inv_hessian;
+
+		//Fixed-size Eigen members in a heap-allocated instance: over-aligned with a
+		//wide vector unit, while operator new guarantees only 16 bytes. See the
+		//fuller note in oc_icgn.h.
+		EIGEN_MAKE_ALIGNED_OPERATOR_NEW
 		float*** sd_img; //steepest descent image
 
 		static std::unique_ptr<NR2D1_> allocate(int subset_radius_x, int subset_radius_y);

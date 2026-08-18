@@ -37,6 +37,23 @@ namespace opencorr
 		Matrix6f inv_hessian;
 		float*** sd_img; //steepest descent image
 
+		//⚑ These instances are heap-allocated with make_unique, and hold fixed-size
+		//Eigen members. A fixed-size Eigen type whose size is a multiple of the
+		//vector width is over-aligned: with AVX-configured Eigen, Matrix12f is 576
+		//bytes, a multiple of 32, and wants 32-byte alignment, while operator new
+		//guarantees only 16. Eigen then asserts and the process aborts.
+		//
+		//Not hypothetical, and invisible on a machine without AVX: this passed for
+		//every build here (EIGEN_MAX_ALIGN_BYTES 16) and aborted with SIGABRT on a
+		//CI runner (32) in ICGN2D2 alone. Matrix6f escapes it only by accident --
+		//144 bytes is a multiple of 16 but not of 32, so it never asks for more
+		//alignment than new provides.
+		//
+		//This is Eigen's documented fix, and it is added to all three rather than
+		//only the one that aborted: the difference between them is the vector
+		//width of whoever compiles it, which is not a property of this code.
+		EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+
 		static std::unique_ptr<ICGN2D1_> allocate(int subset_radius_x, int subset_radius_y);
 		static void release(std::unique_ptr<ICGN2D1_>& instance);
 		static void update(std::unique_ptr<ICGN2D1_>& instance, int subset_radius_x, int subset_radius_y);
@@ -92,6 +109,23 @@ namespace opencorr
 		Matrix12f inv_hessian;
 		float*** sd_img;
 
+		//⚑ These instances are heap-allocated with make_unique, and hold fixed-size
+		//Eigen members. A fixed-size Eigen type whose size is a multiple of the
+		//vector width is over-aligned: with AVX-configured Eigen, Matrix12f is 576
+		//bytes, a multiple of 32, and wants 32-byte alignment, while operator new
+		//guarantees only 16. Eigen then asserts and the process aborts.
+		//
+		//Not hypothetical, and invisible on a machine without AVX: this passed for
+		//every build here (EIGEN_MAX_ALIGN_BYTES 16) and aborted with SIGABRT on a
+		//CI runner (32) in ICGN2D2 alone. Matrix6f escapes it only by accident --
+		//144 bytes is a multiple of 16 but not of 32, so it never asks for more
+		//alignment than new provides.
+		//
+		//This is Eigen's documented fix, and it is added to all three rather than
+		//only the one that aborted: the difference between them is the vector
+		//width of whoever compiles it, which is not a property of this code.
+		EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+
 		static std::unique_ptr<ICGN2D2_> allocate(int subset_radius_x, int subset_radius_y);
 		static void release(std::unique_ptr<ICGN2D2_>& instance);
 		static void update(std::unique_ptr<ICGN2D2_>& instance, int subset_radius_x, int subset_radius_y);
@@ -146,6 +180,23 @@ namespace opencorr
 		Matrix12f hessian;
 		Matrix12f inv_hessian;
 		float**** sd_img; //steepest descent image
+
+		//⚑ These instances are heap-allocated with make_unique, and hold fixed-size
+		//Eigen members. A fixed-size Eigen type whose size is a multiple of the
+		//vector width is over-aligned: with AVX-configured Eigen, Matrix12f is 576
+		//bytes, a multiple of 32, and wants 32-byte alignment, while operator new
+		//guarantees only 16. Eigen then asserts and the process aborts.
+		//
+		//Not hypothetical, and invisible on a machine without AVX: this passed for
+		//every build here (EIGEN_MAX_ALIGN_BYTES 16) and aborted with SIGABRT on a
+		//CI runner (32) in ICGN2D2 alone. Matrix6f escapes it only by accident --
+		//144 bytes is a multiple of 16 but not of 32, so it never asks for more
+		//alignment than new provides.
+		//
+		//This is Eigen's documented fix, and it is added to all three rather than
+		//only the one that aborted: the difference between them is the vector
+		//width of whoever compiles it, which is not a property of this code.
+		EIGEN_MAKE_ALIGNED_OPERATOR_NEW
 
 		static std::unique_ptr<ICGN3D1_> allocate(int subset_radius_x, int subset_radius_y, int subset_radius_z);
 		static void release(std::unique_ptr<ICGN3D1_>& instance);

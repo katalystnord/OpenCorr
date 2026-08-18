@@ -23,8 +23,23 @@ concurrency:
 
 jobs:
   smoke:
-    name: build + smoke tests
+    name: build + smoke tests (${{ matrix.name }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: baseline
+            flags: ""
+          # ⚑ A second configuration with a wider vector unit, because alignment
+          # bugs are invisible without one. Eigen over-aligns a fixed-size type
+          # whose size is a multiple of the vector width, so Matrix12f (576
+          # bytes) needs 32-byte alignment under AVX and only 16 without it --
+          # and operator new provides 16. ICGN2D2 and ICLM2D2 aborted with
+          # SIGABRT on exactly that difference, passing every build on the
+          # machine they were written on.
+          - name: avx
+            flags: "-mavx"
     # The full suite is a little over eight minutes locally, and the two long
     # poles (uncertainty, sequence_tracker) are genuine computation rather than
     # waiting; a slower runner needs room.
@@ -44,7 +59,9 @@ jobs:
             libopencv-dev libeigen3-dev libfftw3-dev libnanoflann-dev libomp-dev
 
       - name: Configure
-        run: cmake -S . -B build -G Ninja -DOPENCORR_BUILD_SMOKE_TEST=ON
+        run: |
+          cmake -S . -B build -G Ninja -DOPENCORR_BUILD_SMOKE_TEST=ON \
+            -DCMAKE_CXX_FLAGS="${{ matrix.flags }}"
 
       - name: Build
         run: cmake --build build

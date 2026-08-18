@@ -94,20 +94,18 @@ namespace opencorr
 			const float observable_floor =
 				largest_diagonal * (float)n * std::numeric_limits<float>::epsilon();
 
-			//⚑ Eigen::DontAlign on the locals below, and it is not cosmetic.
+			//Eigen::DontAlign on the locals below. Defensive, not load-bearing: an
+			//over-aligned fixed-size local inside an OpenMP region depends on the
+			//worker thread's stack alignment, and the cost of not asking is some
+			//vectorization on a matrix of at most twelve rows.
 			//
-			//A fixed-size Eigen type whose size is a multiple of 16 bytes is
-			//vectorizable and carries an over-alignment requirement -- for the
-			//second-order Hessian that is 12x12 floats, 576 bytes, wanting 32-byte
-			//alignment. compute() runs inside an OpenMP parallel region, and a worker
-			//thread's stack is not guaranteed to satisfy that, so an aligned
-			//fixed-size local can trip Eigen's own assertion and abort the process.
-			//That is not theoretical: it passed on the machine it was written on and
-			//aborted with SIGABRT on a CI runner, in ICGN2D2 only, because 12x12 is
-			//the size that is vectorizable and 6x6 (144 bytes) is not.
-			//
-			//DontAlign removes the requirement. The cost is some vectorization on a
-			//matrix of at most twelve rows, which is nothing next to aborting.
+			//It is worth being precise about what this does NOT fix, because the
+			//first attempt got it wrong: the SIGABRT seen on CI came from the
+			//INSTANCE structs in oc_icgn.h, which hold Matrix12f members and are
+			//heap-allocated with make_unique, and it was cured by
+			//EIGEN_MAKE_ALIGNED_OPERATOR_NEW there rather than by anything here.
+			//The giveaway was in the assertion itself -- MatrixOrArrayOptions = 0,
+			//meaning the failing type was AutoAlign, which these locals are not.
 			typedef Eigen::Matrix<float, MatrixT::RowsAtCompileTime,
 				MatrixT::ColsAtCompileTime, Eigen::DontAlign> UnalignedMatrix;
 			typedef Eigen::Matrix<float, MatrixT::RowsAtCompileTime, 1,
