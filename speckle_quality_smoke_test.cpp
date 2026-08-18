@@ -53,6 +53,28 @@ static Image2D renderSpeckledRegion(int image_width, int image_height,
 	return image;
 }
 
+//builds an image with NO speckled region at all: a uniform field plus faint
+//sensor noise. There is nothing here to segment, and the correct output is
+//"no region", not a plausible-looking one.
+static Image2D renderBlankFrame(int image_width, int image_height, double sigma, unsigned seed)
+{
+	Image2D image(image_width, image_height);
+
+	std::mt19937 rng(seed);
+	std::normal_distribution<double> noise(0.0, sigma);
+	for (int r = 0; r < image_height; r++)
+	{
+		for (int c = 0; c < image_width; c++)
+		{
+			int v = (int)std::lround(128.0 + noise(rng));
+			image.cv_mat.at<uchar>(r, c) = (uchar)std::max(0, std::min(255, v));
+		}
+	}
+
+	cv::cv2eigen(image.cv_mat, image.eg_mat);
+	return image;
+}
+
 //intersection-over-union of a Polygon2D against a known axis-aligned rectangle,
 //computed by pixel enumeration (small test images, cheap enough)
 static float rectangleIoU(const Polygon2D& polygon, int rect_x, int rect_y, int rect_w, int rect_h)
@@ -139,30 +161,78 @@ int main()
 	if (!roi_ok) failures++;
 
 	cout << endl << "=== Sanity pass on real speckle photograph ===" << endl;
+	//This image is a coupon speckled across essentially the whole frame, so it
+	//has no speckle-versus-background structure to segment. It is kept as a
+	//check that real data does not crash the detector, and that whatever it
+	//decides is HONEST -- either a region that is genuinely smaller than the
+	//frame, or no region at all.
+	//
+	//The expectation here used to be "finds a plausible non-degenerate region",
+	//which the old code satisfied by returning a bounding box covering 99.5% of
+	//the image. A region identical to the frame is not a segmentation; it is a
+	//refusal wearing a polygon, and asserting it as a success is how the
+	//separability guard's failure stayed invisible.
 	Image2D real_image("examples/2d_dic/oht_cfrp_0.bmp");
 	AutoROI real_roi(20);
-	std::unique_ptr<Shape2D> real_detected = real_roi.detect(real_image);
-	Polygon2D* real_detected_polygon = dynamic_cast<Polygon2D*>(real_detected.get());
+	std::unique_ptr<Shape2D> real_detected_polygon = real_roi.detect(real_image);
 
-	bool real_ok = false;
+	bool real_ok = true;
 	if (real_detected_polygon != nullptr)
 	{
-		int area = (real_detected->getMaxX() - real_detected->getMinX()) * (real_detected->getMaxY() - real_detected->getMinY());
-		int image_area = real_image.width * real_image.height;
-		cout << "  detected polygon: " << real_detected_polygon->numVertices() << " vertices, bbox ["
-			<< real_detected->getMinX() << "," << real_detected->getMinY() << "] to ["
-			<< real_detected->getMaxX() << "," << real_detected->getMaxY() << "]" << endl;
-		cout << "  bbox area / image area = " << (float)area / (float)image_area << endl;
-		//plausible, not necessarily ground-truthed: a real region, not degenerate (empty) and
-		//not trivially the entire image (which would suggest the threshold did nothing)
-		real_ok = area > 0 && area < image_area;
+		int w = real_detected_polygon->getMaxX() - real_detected_polygon->getMinX() + 1;
+		int h = real_detected_polygon->getMaxY() - real_detected_polygon->getMinY() + 1;
+		double area_fraction = (double)w * h / ((double)real_image.width * real_image.height);
+		cout << "  region " << w << " x " << h
+			<< ", bbox area / image area = " << area_fraction << endl;
+		//A "region" that is the whole frame tells the caller nothing.
+		real_ok = area_fraction < 0.95;
+		if (!real_ok) cout << "    that is the whole frame, which is not a segmentation" << endl;
 	}
 	else
 	{
-		cout << "  AutoROI found no region on real image" << endl;
+		cout << "  declined -- no speckle-versus-background structure in this frame" << endl;
 	}
-	cout << "  " << (real_ok ? "PASS" : "FAIL") << " (no crash, plausible non-degenerate region on real data)" << endl;
+	cout << "  " << (real_ok ? "PASS" : "FAIL")
+		<< ": real data yields either a genuine sub-region or an honest refusal" << endl;
 	if (!real_ok) failures++;
+
+	//--- a frame with nothing in it must be DECLINED, not segmented ---
+	//
+	//This is the case detect() documents itself as guarding against, and the
+	//guard did not work. cv::normalize stretches pure sensor noise to full
+	//contrast before thresholding, so a blank frame arrives at Otsu looking
+	//exactly like a high-contrast one; the separability floor was supposed to
+	//catch that and cannot, because Otsu separability answers "how well can
+	//this be cut in two", which is ~0.64 for ANY unimodal spread -- four times
+	//the 0.15 floor -- and independent of the noise amplitude, since
+	//normalisation removes the scale.
+	//
+	//Found from the consumer side: a SurView test asserting that auto-detect
+	//declines on a blank frame failed, and returned a 25-corner region covering
+	//about 80% of the image.
+	cout << endl << "=== A blank frame must be declined, not segmented ===" << endl;
+	int blank_regions = 0;
+	for (double sigma : { 0.5, 1.2, 3.0, 10.0 })
+	{
+		Image2D blank = renderBlankFrame(240, 200, sigma, 7);
+		AutoROI blank_roi(15);
+		std::unique_ptr<Shape2D> blank_detected = blank_roi.detect(blank);
+		bool declined = (blank_detected == nullptr);
+		if (!declined)
+		{
+			blank_regions++;
+			cout << "    sigma " << sigma << ": returned a region of "
+				<< (blank_detected->getMaxX() - blank_detected->getMinX() + 1) << " x "
+				<< (blank_detected->getMaxY() - blank_detected->getMinY() + 1) << " px" << endl;
+		}
+		else
+		{
+			cout << "    sigma " << sigma << ": declined" << endl;
+		}
+	}
+	cout << "  " << (blank_regions == 0 ? "PASS" : "FAIL")
+		<< ": noise-only frames yield no region (" << blank_regions << " of 4 wrongly segmented)" << endl;
+	if (blank_regions != 0) failures++;
 
 	cout << endl << (failures == 0 ? "ALL CHECKS PASSED" : "SOME CHECKS FAILED") << " (" << failures << " failure(s))" << endl;
 

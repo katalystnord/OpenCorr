@@ -255,17 +255,66 @@ namespace opencorr
 			w0 = total > 0.0 ? w0 / total : 0.0;
 			double w1 = 1.0 - w0;
 
-			double separability = 0.0;
-			if (w0 > 0.0 && w1 > 0.0 && total_var > 1e-6)
+			//Otsu separability (between-class variance over total) was the original
+			//guard here, and it does not work for this purpose. It answers "how well
+			//can this histogram be cut in two", which is ~0.64 for ANY unimodal
+			//spread -- a single Gaussian split at its mean gives w0=w1=0.5 and class
+			//means about 0.8 sigma either side -- and cv::normalize above has already
+			//removed the scale, so the value is independent of the noise amplitude.
+			//Against a 0.15 floor, pure sensor noise passed comfortably, and a blank
+			//frame came back segmented into a plausible-looking region covering most
+			//of the image. Measured, not assumed: 0.637 for unimodal noise at every
+			//sigma tried.
+			//
+			//What the guard actually needs to ask is whether the two classes are
+			//DISTINCT, not merely whether a cut exists. Class-mean separation
+			//relative to the within-class spread answers that: for a unimodal
+			//distribution the two halves overlap heavily and the ratio stays near 1,
+			//while a genuine speckle-versus-background split puts the means many
+			//within-class standard deviations apart.
+			double separation = 0.0;
+			if (w0 > 0.0 && w1 > 0.0)
 			{
 				double mean0 = sum0 / (w0 * total);
 				double mean1 = (sum_all - sum0) / (w1 * total);
-				double between_var = w0 * w1 * (mean0 - mean1) * (mean0 - mean1);
-				separability = between_var / total_var;
+
+				double var0 = 0.0, var1 = 0.0;
+				for (int i = 0; i < 256; i++)
+				{
+					if (hist[i] == 0) continue;
+					if (i <= t) var0 += hist[i] * (i - mean0) * (i - mean0);
+					else        var1 += hist[i] * (i - mean1) * (i - mean1);
+				}
+				var0 /= (w0 * total);
+				var1 /= (w1 * total);
+
+				double spread = std::sqrt(var0) + std::sqrt(var1);
+				if (spread > 1e-6)
+				{
+					separation = std::abs(mean1 - mean0) / spread;
+				}
 			}
 
-			const double min_separability = 0.15; //conservative floor, not a tuned/validated threshold
-			if (separability < min_separability)
+			//Heuristic floor, like the area fraction below -- not a tuned or validated
+			//constant. Measured values it was chosen between:
+			//
+			//    3.07   synthetic speckled patch on a plain background (accept)
+			//    1.42 - 1.48   blank frames, sigma 0.5 to 10 (refuse)
+			//    1.19   examples/2d_dic/oht_cfrp_0.bmp, a real DIC coupon (refuse)
+			//
+			//The real photograph scoring BELOW blank noise is not an anomaly: that
+			//coupon is speckled across essentially the whole frame, so there is no
+			//speckle-versus-background structure for a segmentation to find, and the
+			//old code duly "found" a region covering 99.5% of the image -- a bounding
+			//box identical to the frame is not a segmentation, it is a refusal
+			//wearing a polygon. Declining is the better answer, and the caller can
+			//offer to draw the region by hand.
+			//
+			//Set clear of the noise figure rather than close to the speckle one: the
+			//cost of refusing wrongly is a user drawing a boundary themselves, and the
+			//cost of accepting wrongly is a confident region that is not there.
+			const double min_separation = 2.0;
+			if (separation < min_separation)
 			{
 				return nullptr;
 			}

@@ -17,6 +17,8 @@
 #ifndef _SPECKLE_QUALITY_H_
 #define _SPECKLE_QUALITY_H_
 
+#include <cstdio>
+#include <cstdlib>
 #include <memory>
 #include <opencv2/opencv.hpp>
 
