@@ -281,14 +281,30 @@ namespace opencorr
 				}
 			}
 
-			//Interpolation2D::compute() (e.g. BicubicBspline) returns -1.f, not NaN, for a
-			//coordinate outside the target image's interpolatable range. A real pixel
-			//intensity is never negative, so this is an unambiguous way to detect a
-			//partially-out-of-bounds warped subset (a deformation guess that pushes SOME but
-			//not all sample points outside the image) without disturbing the normal in-bounds
-			//path. Without this check the fabricated -1 values silently blend into the ZNSSD
-			//cost below as if they were real intensities instead of being rejected.
-			if ((icgn->tar_subset->eg_mat.array() < 0.f).any())
+			//Interpolation2D::compute() (e.g. BicubicBspline) returns the exact sentinel
+			//OUT_OF_BOUNDS for a coordinate outside the target image's interpolatable
+			//range, detecting a partially-out-of-bounds warped subset (a deformation guess
+			//that pushes SOME but not all sample points outside the image). Without this
+			//check the fabricated values silently blend into the ZNSSD cost below as if
+			//they were real intensities.
+			//
+			//⚑ Compared for EQUALITY against the sentinel, not for "is it negative".
+			//The earlier test was `< 0.f`, justified by "a real pixel intensity is never
+			//negative" -- true of stored pixels, and false of INTERPOLATED ones. A bicubic
+			//B-spline undershoots near a sharp edge, which is precisely what a speckle dot
+			//is, so in-bounds samples of perfectly good data come back below zero:
+			//measured on a synthetic speckle image, 48 of 18281 in-bounds samples were
+			//negative, reaching -8.02. A subset is 1089 samples, so nearly every one
+			//contained at least one, and ICGN rejected 157 of 209 valid points while
+			//NR and IC-LM solved all 209.
+			//
+			//The sentinel is assigned as a literal and never computed, so exact comparison
+			//is sound -- and it is what oc_crack_residual.cpp and oc_uncertainty.cpp
+			//already do with the same value.
+			//Copied to a local: Eigen's array comparison binds its operand by
+			//reference, which ODR-uses the in-class constexpr and fails to link.
+			const float out_of_bounds = BicubicBspline::OUT_OF_BOUNDS;
+			if ((icgn->tar_subset->eg_mat.array() == out_of_bounds).any())
 			{
 				poi->result.zncc = (float)STATUS_INVALID_SUBSET_OR_GUESS;
 				return;
@@ -502,7 +518,12 @@ namespace opencorr
 			}
 
 			//see the comment on the equivalent check in ICGN2D1::compute(POI2D*) above
-			if ((icgn->tar_subset->eg_mat.array() < 0.f).any())
+			//Exact sentinel comparison, not "is it negative" -- see the note at the
+			//first of these four sites for why the difference matters.
+			//Copied to a local: Eigen's array comparison binds its operand by
+			//reference, which ODR-uses the in-class constexpr and fails to link.
+			const float out_of_bounds = BicubicBspline::OUT_OF_BOUNDS;
+			if ((icgn->tar_subset->eg_mat.array() == out_of_bounds).any())
 			{
 				poi->result.zncc = (float)STATUS_INVALID_SUBSET_OR_GUESS;
 				return;
@@ -845,7 +866,12 @@ namespace opencorr
 			}
 
 			//see the comment on the equivalent check in ICGN2D1::compute(POI2D*) above
-			if ((icgn->tar_subset->eg_mat.array() < 0.f).any())
+			//Exact sentinel comparison, not "is it negative" -- see the note at the
+			//first of these four sites for why the difference matters.
+			//Copied to a local: Eigen's array comparison binds its operand by
+			//reference, which ODR-uses the in-class constexpr and fails to link.
+			const float out_of_bounds = BicubicBspline::OUT_OF_BOUNDS;
+			if ((icgn->tar_subset->eg_mat.array() == out_of_bounds).any())
 			{
 				poi->result.zncc = (float)STATUS_INVALID_SUBSET_OR_GUESS;
 				return;
@@ -1082,7 +1108,12 @@ namespace opencorr
 				}
 			}
 			//see the comment on the equivalent check in ICGN2D1::compute(POI2D*) above
-			if ((icgn->tar_subset->eg_mat.array() < 0.f).any())
+			//Exact sentinel comparison, not "is it negative" -- see the note at the
+			//first of these four sites for why the difference matters.
+			//Copied to a local: Eigen's array comparison binds its operand by
+			//reference, which ODR-uses the in-class constexpr and fails to link.
+			const float out_of_bounds = BicubicBspline::OUT_OF_BOUNDS;
+			if ((icgn->tar_subset->eg_mat.array() == out_of_bounds).any())
 			{
 				poi->result.zncc = (float)STATUS_INVALID_SUBSET_OR_GUESS;
 				return;
@@ -1431,7 +1462,8 @@ namespace opencorr
 			//reconstruct target subset
 			//vol_mat is a raw float*** (not an Eigen matrix), so this is tracked with a flag
 			//instead of the .array() reduction used in the 2D overloads above -- same rationale
-			//(TricubicBspline::compute() also returns -1.f for an out-of-range coordinate)
+			//(TricubicBspline::compute() also returns the OUT_OF_BOUNDS sentinel for an
+			//out-of-range coordinate)
 			bool tar_subset_out_of_range = false;
 			for (int i = 0; i < subset_dim_z; i++)
 			{
@@ -1448,7 +1480,10 @@ namespace opencorr
 						warped_coor = p_current.warp(local_coor);
 						global_coor = icgn->tar_subset->center + warped_coor;
 						float gray_value = tar_interp->compute(global_coor);
-						if (gray_value < 0.f)
+						//Exact sentinel comparison, as in the 2D overloads above: an
+						//interpolated value can be legitimately negative through spline
+						//undershoot, so "is it negative" rejects good data.
+						if (gray_value == TricubicBspline::OUT_OF_BOUNDS)
 						{
 							tar_subset_out_of_range = true;
 						}
