@@ -1,1 +1,5 @@
 build/
+
+# Output written by the smoke tests when they run (uncertainty_smoke_test).
+# Regenerated on every run; not source.
+examples/2d_dic/oht_cfrp_4_uncertainty_sample.csv

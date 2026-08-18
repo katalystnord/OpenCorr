@@ -50,10 +50,21 @@ target_link_libraries(opencorr PUBLIC
 
 option(OPENCORR_BUILD_SMOKE_TEST "Build local build-verification smoke tests (*_smoke_test.cpp)" OFF)
 if(OPENCORR_BUILD_SMOKE_TEST)
+    # Registered with CTest, not merely built. Built-but-unregistered tests have
+    # to be found and run one at a time by whoever remembers they exist, which
+    # is how a suite quietly stops being run in full: `ctest` reported nothing
+    # to do here while twenty smoke tests sat beside it.
+    enable_testing()
+
     file(GLOB OPENCORR_SMOKE_TESTS "*_smoke_test.cpp")
     foreach(test_src ${OPENCORR_SMOKE_TESTS})
         get_filename_component(test_name ${test_src} NAME_WE)
         add_executable(${test_name} ${test_src})
         target_link_libraries(${test_name} PRIVATE opencorr)
+        add_test(NAME ${test_name} COMMAND ${test_name})
+        # Several read example images by a path relative to the repository
+        # root, so that is where they are run from regardless of build layout.
+        set_tests_properties(${test_name} PROPERTIES
+            WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}")
     endforeach()
 endif()
