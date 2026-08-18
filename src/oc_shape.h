@@ -87,6 +87,19 @@ namespace opencorr
 
 		int numVertices() const;
 
+		//The boundary itself, in the order it was given. Both lists are the CLOSED form --
+		//the first vertex is repeated at the end, so each holds numVertices()+1 entries --
+		//because that is how contains() walks the edges and copying the closed form is
+		//cheaper than reconstructing it. A caller that wants the open ring should drop the
+		//last entry.
+		//
+		//Added because a Polygon2D was otherwise write-only: a caller handed one built by
+		//AutoROI (oc_speckle_quality.h) could ask whether a pixel falls inside it, and had
+		//no way to read back the boundary in order to draw, export or edit it -- which is
+		//exactly what a GUI consuming auto-detection needs to do with the result.
+		const std::vector<int>& vertexX() const;
+		const std::vector<int>& vertexY() const;
+
 	private:
 		std::vector<int> vertex_x, vertex_y; //closed: the first vertex is repeated at the end
 		int num_vertices;

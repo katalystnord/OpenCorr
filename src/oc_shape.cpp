@@ -151,6 +151,16 @@ namespace opencorr
 	int Polygon2D::getMaxY() const { return max_y; }
 	int Polygon2D::numVertices() const { return num_vertices; }
 
+	const std::vector<int>& Polygon2D::vertexX() const
+	{
+		return vertex_x;
+	}
+
+	const std::vector<int>& Polygon2D::vertexY() const
+	{
+		return vertex_y;
+	}
+
 	Circle2D::Circle2D(int center_x, int center_y, float radius)
 		: center_x(center_x), center_y(center_y), radius(radius)
 	{

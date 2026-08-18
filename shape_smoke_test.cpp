@@ -152,6 +152,42 @@ int main()
 		<< ": a pre-closed ring's degenerate final edge doesn't make every pixel \"inside\"" << endl;
 	if (!preclosed_ok) failures++;
 
+	//--- boundary read-back: a Polygon2D must be readable, not only testable. AutoROI
+	//(oc_speckle_quality.h) hands back a polygon it constructed internally, and a consumer
+	//that can only ask contains() cannot draw, export or edit that boundary.
+	cout << endl << "=== Vertex read-back (vertexX/vertexY) ===" << endl;
+	const vector<int>& read_x = square.vertexX();
+	const vector<int>& read_y = square.vertexY();
+
+	//the closed form: numVertices() edges means numVertices()+1 stored points, the last
+	//repeating the first
+	bool readback_ok = square.numVertices() == (int)sq_x.size()
+		&& read_x.size() == sq_x.size() + 1
+		&& read_y.size() == sq_y.size() + 1
+		&& read_x.back() == sq_x.front()
+		&& read_y.back() == sq_y.front();
+	for (size_t i = 0; i < sq_x.size(); i++)
+	{
+		if (read_x[i] != sq_x[i] || read_y[i] != sq_y[i]) readback_ok = false;
+	}
+	cout << "  read back " << square.numVertices() << " vertices as " << read_x.size()
+		<< " closed points; matches what was given: " << (readback_ok ? "yes" : "no") << endl;
+	cout << "  " << (readback_ok ? "PASS" : "FAIL") << endl;
+	if (!readback_ok) failures++;
+
+	//the same boundary rebuilt from the read-back open ring must behave identically -- the
+	//round trip a GUI actually performs when it redraws or re-edits a detected region
+	vector<int> round_x(read_x.begin(), read_x.end() - 1);
+	vector<int> round_y(read_y.begin(), read_y.end() - 1);
+	Polygon2D rebuilt(round_x, round_y);
+	bool roundtrip_ok = rebuilt.contains(15, 15) && !rebuilt.contains(5, 15)
+		&& rebuilt.getMinX() == square.getMinX() && rebuilt.getMaxX() == square.getMaxX()
+		&& rebuilt.getMinY() == square.getMinY() && rebuilt.getMaxY() == square.getMaxY()
+		&& rebuilt.getOwnedPixels().size() == square.getOwnedPixels().size();
+	cout << "  " << (roundtrip_ok ? "PASS" : "FAIL")
+		<< ": a polygon rebuilt from its own read-back vertices is the same region" << endl;
+	if (!roundtrip_ok) failures++;
+
 	cout << endl << (failures == 0 ? "ALL CHECKS PASSED" : "SOME CHECKS FAILED") << " (" << failures << " failure(s))" << endl;
 	return failures == 0 ? 0 : 1;
 }
