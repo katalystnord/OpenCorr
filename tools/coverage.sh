@@ -73,8 +73,10 @@ if [ "$want_full" -eq 1 ]; then
 else
     echo "Skipping the two heaviest tests (pass --full to include them):"
     echo "  uncertainty_smoke_test, sequence_tracker_smoke_test"
-    echo "So $SLOW_SOURCES will read as uncovered here even though they"
-    echo "are tested. That is a limit of this run, not a gap in the suite."
+    echo "Their own code is still reached by sibling tests -- crack_residual"
+    echo "exercises Uncertainty2D and simplex exercises SequenceTracker2D -- so"
+    echo "$SLOW_SOURCES do not read as uncovered."
+    echo "What is lost is the depth those two dedicated tests add, not the files."
     echo ""
     ( cd "$here" && OMP_NUM_THREADS=1 ctest --test-dir "$build" \
         --output-on-failure -E "$SLOW_TESTS" )
@@ -105,7 +107,8 @@ fi
 
 echo ""
 if [ "$want_full" -eq 0 ]; then
-    echo "NOTE: $SLOW_SOURCES are not measured in this run."
-    echo "      Their own tests were skipped for time. Use --full to include them."
+    echo "NOTE: the two heaviest tests were skipped for time, so the depth they"
+    echo "      add to $SLOW_SOURCES is missing."
+    echo "      Both files are still reached by sibling tests. Use --full for all 20."
 fi
 echo "Per-file detail: $out/coverage.txt"
