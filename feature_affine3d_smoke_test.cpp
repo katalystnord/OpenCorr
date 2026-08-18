@@ -45,6 +45,11 @@ int main()
 	}
 
 	FeatureAffine3D feature_affine(10, 10, 10, 2);
+	//Fixed seed: RANSAC draws its trial subsets at random, and left to
+	//std::random_device this test failed roughly once in every 200 runs. A
+	//suite that fails at random is a suite that gets ignored, and the failure
+	//says nothing about the code when it comes.
+	feature_affine.setRandomSeed(20260818);
 	feature_affine.setSearch(15.f, 8);
 	RansacConfig ransac_config;
 	ransac_config.trial_number = 10;

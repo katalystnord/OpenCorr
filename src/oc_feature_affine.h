@@ -17,6 +17,7 @@
 #ifndef _FEATURE_AFFINE_H_
 #define _FEATURE_AFFINE_H_
 
+#include <cstdint>
 #include <random>
 
 #include "oc_dic.h"
@@ -46,6 +47,9 @@ namespace opencorr
 		//constructed (via std::random_device, a genuinely slow syscall-backed source) on
 		//every single POI's RANSAC trial, ~98,000 times on a full grid
 		std::vector<std::mt19937_64> rng_pool;
+		//0 means "seed from std::random_device", the production default.
+		uint64_t random_seed = 0;
+		void seedRngPool();
 
 	protected:
 		float neighbor_search_radius; //seaching radius for mached keypoints around a POI
@@ -61,6 +65,19 @@ namespace opencorr
 
 		FeatureAffine2D(int radius_x, int radius_y, int thread_number);
 		~FeatureAffine2D();
+
+		//Seeds the RANSAC random number generators deterministically.
+		//
+		//By default the pool is seeded from std::random_device, which is right for
+		//production -- repeated runs should not share a draw -- and wrong for a test,
+		//which then passes or fails on the throw of a die. feature_affine3d_smoke_test
+		//failed once in every 200 runs before this existed, and a suite that fails at
+		//random is a suite that gets ignored.
+		//
+		//Call before compute(). Each thread's generator is given a distinct seed
+		//derived from this one, so the result is reproducible without every thread
+		//drawing the same sequence.
+		void setRandomSeed(uint64_t seed);
 
 		RansacConfig getRansacConfig() const;
 		float getSearchRadius() const;
@@ -89,6 +106,9 @@ namespace opencorr
 
 		//see FeatureAffine2D::rng_pool above -- same reasoning
 		std::vector<std::mt19937_64> rng_pool;
+		//0 means "seed from std::random_device", the production default.
+		uint64_t random_seed = 0;
+		void seedRngPool();
 
 	protected:
 		float neighbor_search_radius; //seaching radius for mached keypoints around a POI
@@ -101,6 +121,19 @@ namespace opencorr
 
 		FeatureAffine3D(int radius_x, int radius_y, int radius_z, int thread_number);
 		~FeatureAffine3D();
+
+		//Seeds the RANSAC random number generators deterministically.
+		//
+		//By default the pool is seeded from std::random_device, which is right for
+		//production -- repeated runs should not share a draw -- and wrong for a test,
+		//which then passes or fails on the throw of a die. feature_affine3d_smoke_test
+		//failed once in every 200 runs before this existed, and a suite that fails at
+		//random is a suite that gets ignored.
+		//
+		//Call before compute(). Each thread's generator is given a distinct seed
+		//derived from this one, so the result is reproducible without every thread
+		//drawing the same sequence.
+		void setRandomSeed(uint64_t seed);
 
 		RansacConfig getRansacConfig() const;
 		float getSearchRadius() const;

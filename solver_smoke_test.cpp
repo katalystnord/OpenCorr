@@ -163,27 +163,7 @@ static bool check(const char* label, DIC& solver, Image2D& ref, Image2D& tar,
 	return solved_enough && accurate;
 }
 
-//⚑ KNOWN DEFECT, recorded rather than accepted.
-//
-//ICGN2D2 rejects roughly half these points with STATUS_HESSIAN_SINGULAR, while
-//ICLM2D2 -- the same twelve-parameter shape function on the same images --
-//solves every one, and the points ICGN2D2 does solve it solves accurately.
-//
-//The cause looks structural rather than data-dependent. invertHessian() rejects
-//when rcond() < 100 * float epsilon (about 1.2e-5), a threshold that suits the
-//6x6 first-order Hessian. The second-order Hessian carries x^2, xy and y^2
-//terms, which over a 33x33 subset span +/-16 and so reach 256, leaving its
-//columns orders of magnitude apart in scale and its condition number far worse
-//BY CONSTRUCTION rather than through any lack of texture. Making the pattern
-//denser and more varied made the yield worse, not better, which is the opposite
-//of what a texture explanation predicts.
-//
-//This figure is therefore what ICGN2D2 currently DOES, not what it should do.
-//It is written here so the suite stays green and honest at once: the accuracy
-//assertions above still apply to ICGN2D2 in full, and if its yield improves,
-//this number should be raised to 0.9 with the rest. Do not read it as a
-//specification, and do not lower it further to make a change pass.
-static const double ICGN2D2_KNOWN_YIELD = 0.45;
+
 
 int main()
 {
@@ -208,7 +188,7 @@ int main()
 		ICGN2D1 icgn1(radius, radius, convergence, iterations, threads);
 		check("ICGN 1st order", icgn1, ref, tar, 3.0, 0.0, 0.01, failures);
 		ICGN2D2 icgn2(radius, radius, convergence, iterations, threads);
-		check("ICGN 2nd order", icgn2, ref, tar, 3.0, 0.0, 0.01, failures, ICGN2D2_KNOWN_YIELD);
+		check("ICGN 2nd order", icgn2, ref, tar, 3.0, 0.0, 0.01, failures);
 		NR2D1 nr(radius, radius, convergence, iterations, threads);
 		check("Newton-Raphson", nr, ref, tar, 3.0, 0.0, 0.01, failures);
 		ICLM2D1 iclm1(radius, radius, convergence, iterations, threads);
@@ -231,7 +211,7 @@ int main()
 		ICGN2D1 icgn1(radius, radius, convergence, iterations, threads);
 		check("ICGN 1st order", icgn1, ref, tar, 2.5, -1.25, tol, failures);
 		ICGN2D2 icgn2(radius, radius, convergence, iterations, threads);
-		check("ICGN 2nd order", icgn2, ref, tar, 2.5, -1.25, tol, failures, ICGN2D2_KNOWN_YIELD);
+		check("ICGN 2nd order", icgn2, ref, tar, 2.5, -1.25, tol, failures);
 		NR2D1 nr(radius, radius, convergence, iterations, threads);
 		check("Newton-Raphson", nr, ref, tar, 2.5, -1.25, tol, failures);
 		ICLM2D1 iclm1(radius, radius, convergence, iterations, threads);
@@ -256,13 +236,53 @@ int main()
 		ICGN2D1 icgn1(radius, radius, convergence, iterations, threads);
 		check("ICGN 1st order", icgn1, ref, tar, expect_u, 0.0, tol, failures);
 		ICGN2D2 icgn2(radius, radius, convergence, iterations, threads);
-		check("ICGN 2nd order", icgn2, ref, tar, expect_u, 0.0, tol, failures, ICGN2D2_KNOWN_YIELD);
+		check("ICGN 2nd order", icgn2, ref, tar, expect_u, 0.0, tol, failures);
 		NR2D1 nr(radius, radius, convergence, iterations, threads);
 		check("Newton-Raphson", nr, ref, tar, expect_u, 0.0, tol, failures);
 		ICLM2D1 iclm1(radius, radius, convergence, iterations, threads);
 		check("IC-LM 1st order", iclm1, ref, tar, expect_u, 0.0, tol, failures);
 		ICLM2D2 iclm2(radius, radius, convergence, iterations, threads);
 		check("IC-LM 2nd order", iclm2, ref, tar, expect_u, 0.0, tol, failures);
+	}
+
+	//--- the conditioning guard must still reject genuine degeneracy ----------
+	//
+	//The guard now equilibrates before judging, which stopped it rejecting
+	//well-textured subsets on the strength of the shape function's units alone.
+	//This checks the other direction: a subset with no information in it must
+	//STILL be refused, rather than inverted into meaningless numbers. Without
+	//this, "fixing" the false rejections could quietly have removed the guard.
+	cout << endl << "=== A featureless subset is still rejected ===" << endl;
+	{
+		//A uniform field: every steepest-descent image is zero, so the Hessian
+		//is singular no matter how it is scaled.
+		cv::Mat flat(height, width, CV_8UC1, cv::Scalar(128));
+		Image2D flat_ref = toImage2D(flat);
+		Image2D flat_tar = toImage2D(flat);
+
+		vector<POI2D> poi;
+		for (int y = 40; y <= 140; y += 20)
+		{
+			for (int x = 40; x <= 220; x += 20)
+			{
+				poi.emplace_back(Point2D((float)x, (float)y));
+			}
+		}
+
+		ICGN2D2 icgn(radius, radius, convergence, iterations, threads);
+		icgn.setImages(flat_ref, flat_tar);
+		icgn.prepare();
+		icgn.compute(poi);
+
+		int accepted = 0;
+		for (auto& p : poi)
+		{
+			if (!isFailureStatus(p.result.zncc)) accepted++;
+		}
+		cout << "    " << (accepted == 0 ? "PASS" : "FAIL")
+			<< "  ICGN 2nd order accepted " << accepted << " of " << poi.size()
+			<< " points on a uniform image (want 0)" << endl;
+		if (accepted != 0) failures++;
 	}
 
 	cout << endl << (failures == 0 ? "ALL CHECKS PASSED" : "SOME CHECKS FAILED")

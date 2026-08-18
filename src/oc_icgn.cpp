@@ -37,15 +37,83 @@ namespace opencorr
 		//also a genuine conditioning measure (unlike isInvertible()'s near-exact-rank-deficiency
 		//test), so it actually catches "technically full rank but numerically unusable" cases,
 		//not just exactly-singular ones.
+		//⚑ The conditioning is measured on the EQUILIBRATED Hessian, not the raw one.
+		//
+		//H is J^T J, and for a second-order shape function the columns of J carry
+		//1, x, y, x^2, xy and y^2. Over a 33x33 subset x and y reach +/-16, so the
+		//quadratic columns are around 256 times the constant one and H's diagonal
+		//spans five orders of magnitude before any question of rank arises. Judging
+		//rcond() on that measures the UNITS of the shape function, not whether the
+		//subset carries enough information to fit it: ICGN2D2 was rejecting about
+		//half of all points as ill-conditioned while ICLM2D2 -- the same twelve
+		//parameters on the same images -- solved every one, and the points ICGN2D2
+		//did solve it solved accurately.
+		//
+		//Symmetric Jacobi equilibration, H' = D H D with D = diag(1/sqrt(H_ii)),
+		//puts every diagonal entry at 1 and leaves a condition number that reflects
+		//genuine linear dependence between the columns. That is the quantity the
+		//check wants. The scaling is then undone so the caller still receives the
+		//inverse of the ORIGINAL H: (D H D)^-1 = D^-1 H^-1 D^-1, so H^-1 = D H'^-1 D.
+		//
+		//
+		//Still PartialPivLU rather than FullPivLU: this runs once per POI in a
+		//per-POI hot loop, rcond() reuses the decomposition the inverse needs
+		//anyway, and it is a genuine conditioning measure rather than
+		//isInvertible()'s near-exact-rank-deficiency test.
 		template<typename MatrixT>
 		bool invertHessian(const MatrixT& hessian, MatrixT& inv_hessian)
 		{
-			Eigen::PartialPivLU<MatrixT> lu(hessian);
+			const int n = (int)hessian.rows();
+
+			//⚑ Observability first, conditioning second. Equilibration alone is NOT
+			//enough, and getting this wrong is silent: scaling divides each row and
+			//column by sqrt(H_ii), so a block that is pure floating-point rounding
+			//noise gets scaled up to unit magnitude and comes back looking healthy.
+			//Measured on the unidirectional-texture case in status_flag_smoke_test,
+			//whose y-gradient is zero to within float rounding: rcond is 5.9e-17 on
+			//the raw Hessian, correctly singular, and 4.5e-01 after equilibration --
+			//well-conditioned, and completely wrong. Left at that, ICGN would have
+			//inverted it and reported a y-displacement made of rounding error.
+			//
+			//So a diagonal entry is first required to be distinguishable from zero
+			//GIVEN THE MAGNITUDES BEING SUMMED. H is accumulated over the subset in
+			//float, so anything below max(H_ii) * n * epsilon is within the noise of
+			//that accumulation and means the parameter is unobservable here. That is
+			//a noise floor rather than a tuned constant: the degenerate case sits at
+			//a ratio of 7e-17 and a well-textured second-order subset at 7e-3, five
+			//orders either side of it.
+			float largest_diagonal = 0.f;
+			for (int i = 0; i < n; i++)
+			{
+				largest_diagonal = std::max(largest_diagonal, hessian(i, i));
+			}
+			if (!(largest_diagonal > 0.f))
+			{
+				return false;
+			}
+			const float observable_floor =
+				largest_diagonal * (float)n * std::numeric_limits<float>::epsilon();
+
+			Eigen::Matrix<float, MatrixT::RowsAtCompileTime, 1> scale(n);
+			for (int i = 0; i < n; i++)
+			{
+				const float diagonal = hessian(i, i);
+				if (!(diagonal > observable_floor))
+				{
+					return false;
+				}
+				scale(i) = 1.f / std::sqrt(diagonal);
+			}
+
+			MatrixT equilibrated = scale.asDiagonal() * hessian * scale.asDiagonal();
+
+			Eigen::PartialPivLU<MatrixT> lu(equilibrated);
 			if (lu.rcond() < 1.0e2f * std::numeric_limits<float>::epsilon())
 			{
 				return false;
 			}
-			inv_hessian = lu.inverse();
+
+			inv_hessian = scale.asDiagonal() * lu.inverse() * scale.asDiagonal();
 			return true;
 		}
 	}

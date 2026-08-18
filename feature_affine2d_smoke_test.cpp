@@ -41,6 +41,9 @@ int main()
 	}
 
 	FeatureAffine2D feature_affine(10, 10, 2);
+	//Fixed seed, for the same reason as the 3D test: RANSAC is randomised, and
+	//a test that depends on the draw is a test that fails for no reason.
+	feature_affine.setRandomSeed(20260818);
 	feature_affine.setSearch(15.f, 7);
 	RansacConfig ransac_config;
 	ransac_config.trial_number = 10;

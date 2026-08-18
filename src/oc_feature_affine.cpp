@@ -193,12 +193,7 @@ namespace opencorr
 		subset_radius_min = 10;
 
 		instance_pool.resize(thread_number);
-		rng_pool.reserve(thread_number);
-		std::random_device rd;
-		for (int i = 0; i < thread_number; i++)
-		{
-			rng_pool.emplace_back(rd());
-		}
+		seedRngPool();
 #pragma omp parallel for
 		for (int i = 0; i < thread_number; i++)
 		{
@@ -213,6 +208,37 @@ namespace opencorr
 			instance.reset();
 		}
 		std::vector<std::unique_ptr<NearestNeighbor>>().swap(instance_pool);
+	}
+
+	void FeatureAffine2D::setRandomSeed(uint64_t seed)
+	{
+		random_seed = seed;
+		seedRngPool();
+	}
+
+	void FeatureAffine2D::seedRngPool()
+	{
+		rng_pool.clear();
+		rng_pool.reserve(thread_number);
+		if (random_seed == 0)
+		{
+			//Production: every run gets its own draw.
+			std::random_device rd;
+			for (int i = 0; i < thread_number; i++)
+			{
+				rng_pool.emplace_back(rd());
+			}
+		}
+		else
+		{
+			//Reproducible, but not identical across threads: each generator is
+			//offset from the requested seed, so threads do not all walk the same
+			//sequence while the run as a whole stays repeatable.
+			for (int i = 0; i < thread_number; i++)
+			{
+				rng_pool.emplace_back(random_seed + (uint64_t)i * 0x9E3779B97F4A7C15ull);
+			}
+		}
 	}
 
 	RansacConfig FeatureAffine2D::getRansacConfig() const
@@ -452,12 +478,7 @@ namespace opencorr
 		this->thread_number = thread_number;
 
 		instance_pool.resize(thread_number);
-		rng_pool.reserve(thread_number);
-		std::random_device rd;
-		for (int i = 0; i < thread_number; i++)
-		{
-			rng_pool.emplace_back(rd());
-		}
+		seedRngPool();
 #pragma omp parallel for
 		for (int i = 0; i < thread_number; i++)
 		{
@@ -472,6 +493,37 @@ namespace opencorr
 			instance.reset();
 		}
 		std::vector<std::unique_ptr<NearestNeighbor>>().swap(instance_pool);
+	}
+
+	void FeatureAffine3D::setRandomSeed(uint64_t seed)
+	{
+		random_seed = seed;
+		seedRngPool();
+	}
+
+	void FeatureAffine3D::seedRngPool()
+	{
+		rng_pool.clear();
+		rng_pool.reserve(thread_number);
+		if (random_seed == 0)
+		{
+			//Production: every run gets its own draw.
+			std::random_device rd;
+			for (int i = 0; i < thread_number; i++)
+			{
+				rng_pool.emplace_back(rd());
+			}
+		}
+		else
+		{
+			//Reproducible, but not identical across threads: each generator is
+			//offset from the requested seed, so threads do not all walk the same
+			//sequence while the run as a whole stays repeatable.
+			for (int i = 0; i < thread_number; i++)
+			{
+				rng_pool.emplace_back(random_seed + (uint64_t)i * 0x9E3779B97F4A7C15ull);
+			}
+		}
 	}
 
 	RansacConfig FeatureAffine3D::getRansacConfig() const
