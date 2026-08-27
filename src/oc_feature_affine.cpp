@@ -209,7 +209,7 @@ namespace opencorr
 					std::vector<uint32_t> k_neighbor_idx;
 					std::vector<float> k_squared_distance;
 
-					neighbor_num = neighbor_search->knnSearch(current_point, neighbor_number_min, k_neighbor_idx, k_squared_distance);
+					neighbor_num = neighbor_search->knnSearch(current_point, k_neighbor_idx, k_squared_distance);
 
 					ref_candidates.resize(neighbor_num);
 					tar_candidates.resize(neighbor_num);
@@ -467,7 +467,7 @@ namespace opencorr
 				std::vector<uint32_t> k_neighbor_idx;
 				std::vector<float> k_squared_distance;
 
-				neighbor_num = neighbor_search->knnSearch(current_point, neighbor_number_min, k_neighbor_idx, k_squared_distance);
+				neighbor_num = neighbor_search->knnSearch(current_point, k_neighbor_idx, k_squared_distance);
 
 				ref_candidates.resize(neighbor_num);
 				tar_candidates.resize(neighbor_num);
