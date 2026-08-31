@@ -470,6 +470,7 @@ namespace opencorr
 	{
 		this->subset_radius_x = radius_x;
 		this->subset_radius_y = radius_y;
+		this->subset_radius_z = radius_z;
 		neighbor_search_radius = sqrt((float)(radius_x * radius_x + radius_y * radius_y + radius_z * radius_z));
 		neighbor_number_min = 16;
 		ransac_config.error_threshold = 3.2f;
