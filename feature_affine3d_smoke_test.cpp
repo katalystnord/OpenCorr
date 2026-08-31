@@ -74,6 +74,28 @@ int main()
 		"(pre-fix, wy would read " << (1.f + true_wz) << " and wz would read 0)" << endl;
 	if (!ok) failures++;
 
+	cout << endl << "=== FeatureAffine3D: the constructor records every radius it was given ===" << endl;
+
+	//Upstream fix e85d781, merged down 2026-08-31. The constructor assigned
+	//subset_radius_x and subset_radius_y and silently dropped radius_z, and
+	//DVC::DVC() is an empty body, so subset_radius_z was left UNINITIALISED --
+	//not zero, whatever happened to be on the stack.
+	//
+	//The case above cannot catch it: it calls setSearch(), which overwrites
+	//neighbor_search_radius, the one value the constructor derives from all
+	//three radii. Anything reading subset_radius_z itself -- a caller sizing a
+	//subset from the matcher it was handed -- reads a number nobody set.
+	FeatureAffine3D radii(7, 8, 9, 1);
+	cout << "  subset radii recorded: x=" << radii.subset_radius_x
+		<< " y=" << radii.subset_radius_y << " z=" << radii.subset_radius_z << endl;
+	cout << "  given: x=7 y=8 z=9" << endl;
+
+	bool radii_ok = radii.subset_radius_x == 7 && radii.subset_radius_y == 8
+		&& radii.subset_radius_z == 9;
+	cout << "  " << (radii_ok ? "PASS" : "FAIL")
+		<< ": every radius survived the constructor (pre-fix, z was never assigned)" << endl;
+	if (!radii_ok) failures++;
+
 	cout << endl << (failures == 0 ? "ALL CHECKS PASSED" : "SOME CHECKS FAILED") << " (" << failures << " failure(s))" << endl;
 	return failures == 0 ? 0 : 1;
 }
