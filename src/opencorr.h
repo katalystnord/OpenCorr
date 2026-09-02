@@ -40,6 +40,7 @@
 #include "oc_phase_correlation.h"
 #include "oc_poi.h"
 #include "oc_point.h"
+#include "oc_region_fit.h"
 #include "oc_reliability_guided.h"
 #include "oc_sequence_tracker.h"
 #include "oc_shape.h"

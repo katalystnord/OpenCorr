@@ -61,7 +61,7 @@ every finding fixed or explicitly resolved with the reasoning recorded:
 [#17](https://github.com/katalystnord/OpenCorr/issues/17) and
 [#18](https://github.com/katalystnord/OpenCorr/issues/18).
 
-Small, generically-useful fixes found during this work are submitted upstream
+Small, generically-useful fixes found during this work were submitted upstream
 directly rather than kept in the fork. All four are merged:
 [#24](https://github.com/vincentjzy/OpenCorr/pull/24) (missing `<random>`
 include on Linux/GCC),
@@ -74,6 +74,13 @@ wy/wz copy-paste bug).
 
 Upstreaming a fix is not considered finished until it is merged back down
 into this branch, checked by content rather than by the commit graph.
+
+Further fixes are staying in this branch for now rather than going upstream,
+while upstream is mid-rewrite: a patch against code being rewritten costs the
+maintainer a review and may not survive the rewrite, and it is the wrong moment
+to add to that queue. This is a pause on new pull requests and not a change of
+posture; the four above stand, and the branch is still kept in a state where a
+fix could be lifted out of it cleanly.
 
 OpenCorr is MPL-2.0 licensed; this fork remains MPL-2.0 for the same files,
 per the terms of that license.
