@@ -20,7 +20,13 @@ Users can also access the information of OpenCorr via website [opencorr.org](htt
 
 This is [SurView DIC](https://github.com/katalystnord/SurView)'s engine
 fork of OpenCorr - everything below this section is Dr. Jiang's original
-upstream README, kept as-is.
+upstream README, kept as-is. For OpenCorr itself, its documentation and how
+to cite it, go to upstream and to [opencorr.org](http://opencorr.org); this
+fork is not a competing distribution of the library.
+
+SurView builds against this branch and will not configure without it. What
+that application does with the engine is at
+[katalystnord.github.io/SurView](https://katalystnord.github.io/SurView/).
 
 - **`main`** tracks upstream (`vincentjzy/OpenCorr`) as a clean, unmodified
   mirror.
@@ -36,20 +42,38 @@ upstream README, kept as-is.
 Modules added on `surview-dev` so far:
 
 - Uncertainty quantification (sigma/beta metrics) - [#2](https://github.com/katalystnord/OpenCorr/issues/2)
-- Checkerboard camera calibration solve + stereo epipolar quality metric - [#3](https://github.com/katalystnord/OpenCorr/issues/3)
+- Camera calibration: checkerboard and dot-target/donut-marker detection, plus a stereo epipolar quality metric - [#3](https://github.com/katalystnord/OpenCorr/issues/3)
 - `.cine` high-speed-camera file I/O - [#4](https://github.com/katalystnord/OpenCorr/issues/4)
 - Gradient-free (Nelder-Mead simplex) matching - [#5](https://github.com/katalystnord/OpenCorr/issues/5)
 - Phase-correlation initializer - [#6](https://github.com/katalystnord/OpenCorr/issues/6)
 - RG-DIC seed-propagation flood-fill - [#7](https://github.com/katalystnord/OpenCorr/issues/7)
 - Sequence/reference-update tracking - [#8](https://github.com/katalystnord/OpenCorr/issues/8)
 - Conformal/arbitrary subset shapes (data model, phase 1) - [#9](https://github.com/katalystnord/OpenCorr/issues/9)
+- Speckle quality metrics (MIG, SSSIG, SIFT density and evenness) - [#11](https://github.com/katalystnord/OpenCorr/issues/11)
+- Auto-ROI segmentation, an MIG quality map through an Otsu threshold into the existing `Polygon2D` - [#12](https://github.com/katalystnord/OpenCorr/issues/12)
+- Per-point failure-reason taxonomy (`StatusFlag` + `statusDescription()`), wired through every solver's bail-out points - [#13](https://github.com/katalystnord/OpenCorr/issues/13)
+- Dynamic obstruction/occlusion masking (data model, phase 1) - [#14](https://github.com/katalystnord/OpenCorr/issues/14)
+- Multiply-connected regions, an outer shape minus holes (`RegionWithHoles2D`) - [#15](https://github.com/katalystnord/OpenCorr/issues/15)
+- Crack/discontinuity full-field self-consistency diagnostic (`CrackResidual2D`) - [#16](https://github.com/katalystnord/OpenCorr/issues/16)
 
-Two small, generically-useful fixes found during this work were also
-submitted upstream directly, independent of the fork:
+The branch has also been through two full-branch audits, both closed with
+every finding fixed or explicitly resolved with the reasoning recorded:
+[#17](https://github.com/katalystnord/OpenCorr/issues/17) and
+[#18](https://github.com/katalystnord/OpenCorr/issues/18).
+
+Small, generically-useful fixes found during this work are submitted upstream
+directly rather than kept in the fork. All four are merged:
+[#24](https://github.com/vincentjzy/OpenCorr/pull/24) (missing `<random>`
+include on Linux/GCC),
 [#25](https://github.com/vincentjzy/OpenCorr/pull/25) (out-of-bounds target
-subset corruption in ICGN) and
+subset corruption in ICGN),
 [#26](https://github.com/vincentjzy/OpenCorr/pull/26) (OpenMP thread-pool
-pinning).
+pinning) and
+[#27](https://github.com/vincentjzy/OpenCorr/pull/27) (`FeatureAffine3D`
+wy/wz copy-paste bug).
+
+Upstreaming a fix is not considered finished until it is merged back down
+into this branch, checked by content rather than by the commit graph.
 
 OpenCorr is MPL-2.0 licensed; this fork remains MPL-2.0 for the same files,
 per the terms of that license.
