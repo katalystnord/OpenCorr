@@ -9,3 +9,8 @@ examples/2d_dic/oht_cfrp_4_uncertainty_sample.csv
 build-coverage/
 build-mutants/
 build-asan/
+
+# Inputs libFuzzer saved because they caused a fault. Kept out of the repository
+# deliberately: a finding's value is the FIX and the case that pins it, and a
+# directory of binary blobs invites committing the symptom instead.
+tools/fuzz/findings/

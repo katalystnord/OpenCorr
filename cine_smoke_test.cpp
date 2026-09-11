@@ -201,6 +201,18 @@ int main()
 			push16(1000); //frame_rate, at off_setup=84 -- needed so cases that legitimately
 			              //reach this read (image_count=0) don't fail on an unrelated
 			              //truncation check instead of the guard actually under test
+
+			//⚑ AND THE OFFSET TABLE THE HEADER DECLARES, for exactly the same
+			//reason. read_header() now refuses a file too short to hold the table
+			//its own image_count asks for -- which is what the truncation case
+			//above is FOR -- and without these bytes every case here would be
+			//refused by that guard before reaching the one it is named for, and
+			//would pass for the wrong reason. The offsets themselves are never
+			//read by these cases: each check under test fires earlier in the
+			//header than the loop that reads them.
+			for (uint32_t i = 0; i < image_count; ++i){
+				push64(i);
+			}
 			return buf;
 		};
 

@@ -514,6 +514,26 @@ HyperCine::read_header(const char * file_name){
   if(cine_file.fail()){
     throw std::invalid_argument("HyperCine::read_header(): truncated cine file, failed reading CINE header fields: " + (std::string)file_name);
   }
+  // ⚑ A COUNT THE FILE DECLARES MUST BE BACKED BY THE FILE'S OWN SIZE. The
+  // offsets table is image_count entries of int64_t at off_image_offsets, so a
+  // file too short to hold that many has not got them. Resizing first means a
+  // header claiming four billion images asks for 32 GB before the loop that
+  // reads them ever gets to notice the file is short - and the allocation is
+  // what takes the process down, so the truncation check below never runs.
+  //
+  // This is the same rule IO::loadMatrixBin() already applies to its own
+  // declared queue_length, and its own smoke test says so in as many words:
+  // "a header claiming a huge queue_length with no backing data returns empty,
+  // not a multi-GB allocation attempt". Found here by fuzzing the header, in
+  // 1774 inputs, which is the argument for fuzzing a format nobody here
+  // controls.
+  const long long int declared_offsets_bytes =
+    (long long int)header_.image_count * (long long int)sizeof(int64_t);
+  if ((long long int)header_.off_image_offsets + declared_offsets_bytes > file_size){
+    throw std::invalid_argument("HyperCine::read_header(): truncated cine file, the offset table for the "
+      + std::to_string(header_.image_count) + " images it declares does not fit in the file: "
+      + (std::string)file_name);
+  }
   image_offsets_.resize(header_.image_count);
 
   // BITMAP HEADER
@@ -541,6 +561,13 @@ HyperCine::read_header(const char * file_name){
   cine_file.read(reinterpret_cast<char*>(&bitmap_header_.height), sizeof(bitmap_header_.height));
   DEBUG_MSG("HyperCine::read_header(): bitmap height:           " << bitmap_header_.height);
   if(bitmap_header_.height < 0){
+    // ⚑ ONE NEGATIVE NUMBER HAS NO POSITIVE COUNTERPART. A negative height is
+    // the bitmap convention for a top-down pixel array, so flipping the sign is
+    // right - except at INT32_MIN, where the result is not representable and
+    // the negation is undefined behaviour rather than a large number. Found by
+    // the undefined-behaviour sanitizer while fuzzing; no reading of this line
+    // suggests it.
+    ASSERT_OR_EXCEPTION(bitmap_header_.height != INT32_MIN);
     std::cout <<"** Warning: the cine file has recorded the pixel array upside down" << std::endl;
     bitmap_header_.height *= -1;
   }
@@ -554,8 +581,17 @@ HyperCine::read_header(const char * file_name){
   cine_file.read(reinterpret_cast<char*>(&bitmap_header_.size_image), sizeof(bitmap_header_.size_image));
   DEBUG_MSG("HyperCine::read_header(): bitmap image size:       " << bitmap_header_.size_image);
   ASSERT_OR_EXCEPTION((int64_t)bitmap_header_.size_image*(int64_t)header_.image_count <= file_size);
-  ASSERT_OR_EXCEPTION(bitmap_header_.width!=0 && bitmap_header_.height!=0);
-  int bit_depth = (bitmap_header_.size_image * 8) / (bitmap_header_.width * bitmap_header_.height);
+  // ⚑ POSITIVE, not merely non-zero, and multiplied in 64 bits. The "!=0" here
+  // was itself a fix, for the division by zero found by reading this function
+  // (fork issue #18) - and it stopped one step short twice over: a NEGATIVE
+  // width is not a width either, and width * height is int32 arithmetic that
+  // overflows long before a plausible sensor does. Signed overflow is undefined
+  // behaviour rather than a large number, so what follows is not a wrong bit
+  // depth but no defined answer at all. Found by the undefined-behaviour
+  // sanitizer while fuzzing the header.
+  ASSERT_OR_EXCEPTION(bitmap_header_.width>0 && bitmap_header_.height>0);
+  const int64_t bitmap_pixels = (int64_t)bitmap_header_.width * (int64_t)bitmap_header_.height;
+  int bit_depth = (int)(((int64_t)bitmap_header_.size_image * 8) / bitmap_pixels);
   DEBUG_MSG("HyperCine::read_header(): bitmap actual bit count: " << bit_depth);
   cine_file.read(reinterpret_cast<char*>(&bitmap_header_.x_pixels_per_meter), sizeof(bitmap_header_.x_pixels_per_meter));
   DEBUG_MSG("HyperCine::read_header(): bitmap x pels/meter:     " << bitmap_header_.x_pixels_per_meter);
@@ -622,6 +658,19 @@ HyperCine::read_header(const char * file_name){
     if(cine_file.fail()){
       throw std::invalid_argument("HyperCine::read_header(): truncated cine file, failed reading image offset "
         + std::to_string(i) + " of " + std::to_string(header_.image_count) + ": " + (std::string)file_name);
+    }
+    // ⚑ AN OFFSET OUTSIDE THE FILE IS NOT AN OFFSET. These are file positions
+    // read verbatim out of the header, and nothing downstream treats them as
+    // anything else: the frame reader seeks to them, and the header size below
+    // is the DIFFERENCE between two of them. Two arbitrary int64 values
+    // subtracted is signed overflow, which is undefined behaviour rather than a
+    // large number - caught here by the undefined-behaviour sanitizer while
+    // fuzzing, not by reading the code. Bounding them to the file is what makes
+    // that subtraction meaningful as well as defined.
+    if(offset < 0 || offset > file_size){
+      throw std::invalid_argument("HyperCine::read_header(): image offset " + std::to_string(i)
+        + " points outside the file (" + std::to_string(offset) + " of " + std::to_string(file_size)
+        + " bytes): " + (std::string)file_name);
     }
     image_offsets_[i] = offset;
   }
