@@ -27,6 +27,33 @@ if(OPENCORR_COVERAGE)
     add_link_options(--coverage)
 endif()
 
+# ⚑ ADDRESS AND UNDEFINED-BEHAVIOUR SANITIZERS. This is the tool the mutation
+# work in SurView and PatternFab pointed at: of the mutants left standing there
+# after every case worth writing had been written, the large majority read or
+# write ONE ELEMENT past the end of a vector, and no assertion can catch that --
+# the value read is whatever sits beyond the buffer and nothing downstream need
+# change. A sanitizer catches the access itself rather than its consequences,
+# which is the only way that class gets closed.
+#
+# It matters more here than there. This library is index and pointer arithmetic
+# in OpenMP hot loops, and a defect in it is a WRONG NUMBER rather than a wrong
+# message. Three crash bugs in hypercine's read_header() were found by reading
+# the code (fork issue #18); a sanitizer finds that shape without anyone having
+# to suspect it first.
+#
+# -fno-sanitize-recover is what makes it a test rather than a log: without it
+# UBSan prints a diagnostic, carries on, and the suite stays green while telling
+# the truth in a place nobody reads. Off by default and built into its own
+# directory, for the same reason coverage is: the instrumentation changes the
+# object code, so producing the library anyone links and checking it are
+# different jobs.
+option(OPENCORR_SANITIZE "Build with address and undefined-behaviour sanitizers" OFF)
+if(OPENCORR_SANITIZE)
+    add_compile_options(-fsanitize=address,undefined -fno-sanitize-recover=all
+                        -fno-omit-frame-pointer -g -O1)
+    add_link_options(-fsanitize=address,undefined)
+endif()
+
 add_library(opencorr STATIC ${OPENCORR_SOURCES} deps/hypercine/hypercine.cpp)
 
 # OpenCorr's headers use `#include <Eigen>` (the umbrella header with no

@@ -81,3 +81,43 @@ jobs:
             echo "Ignore these deliberately in .gitignore, or stop writing them."
             exit 1
           fi
+
+  sanitizers:
+    name: address + undefined-behaviour sanitizers
+    runs-on: ubuntu-latest
+    # ⚑ THE CLASS NO ASSERTION CAN CATCH. A read one element past the end of a
+    # vector returns whatever sits there and changes nothing downstream, so a
+    # test cannot see it and a mutation sweep reports it as a survivor with
+    # nothing to be done. SurView and PatternFab between them left dozens of
+    # exactly that shape standing after every case worth writing had been
+    # written, which is what sent this job here.
+    #
+    # It matters more in this repository than in either of those: this is index
+    # and pointer arithmetic in OpenMP hot loops, and a defect here is a WRONG
+    # NUMBER rather than a wrong message.
+    #
+    # Instrumented code is slower, so this gets its own run and its own budget
+    # rather than a place in the matrix above.
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            ninja-build cmake g++ \
+            libopencv-dev libeigen3-dev libfftw3-dev libnanoflann-dev libomp-dev
+
+      - name: Configure
+        run: |
+          cmake -S . -B build-asan -G Ninja -DOPENCORR_BUILD_SMOKE_TEST=ON \
+            -DOPENCORR_SANITIZE=ON
+
+      - name: Build
+        run: cmake --build build-asan
+
+      - name: Run the smoke tests under the sanitizers
+        # -fno-sanitize-recover is compiled in, so a diagnostic is a failure
+        # rather than a line in a log nobody reads.
+        run: ctest --test-dir build-asan --output-on-failure

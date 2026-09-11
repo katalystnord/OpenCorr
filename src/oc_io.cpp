@@ -1327,6 +1327,11 @@ namespace opencorr
 			}
 		}
 		file_out.close();
+
+		//the volume this borrowed is the whole map, and it was never given back:
+		//dim_x * dim_y * dim_z floats leaked on EVERY call. Its 2D sibling uses an
+		//Eigen matrix and frees itself; this one allocates by hand and must say so.
+		delete3D(output_map);
 	}
 
 	void IO3D::saveMatrixBin(std::vector<POI3D>& poi_queue)
