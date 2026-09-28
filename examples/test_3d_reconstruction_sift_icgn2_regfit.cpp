@@ -252,6 +252,7 @@ int main()
 
 					pois_unreliable.erase(pois_unreliable.begin() + j);
 					pois_unreliable_idx.erase(pois_unreliable_idx.begin() + j);
+					j--;
 
 					success_counter++;
 				}
