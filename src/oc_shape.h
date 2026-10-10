@@ -122,6 +122,28 @@ namespace opencorr
 		float radius;
 	};
 
+	//Axis-aligned ellipse, added for SurView's region tools, where an ellipse is drawn by
+	//dragging out its bounding box. The centre is a float because a box an odd number of
+	//pixels wide centres on a half pixel, and rounding it would shift the whole shape by
+	//half a pixel toward one side. Membership is boundary-inclusive, as Circle2D's is:
+	//((x - cx) / semi_x)^2 + ((y - cy) / semi_y)^2 <= 1. Not rotatable; a rotated ellipse
+	//can be added when something draws one.
+	class Ellipse2D : public Shape2D
+	{
+	public:
+		Ellipse2D(float center_x, float center_y, float semi_x, float semi_y);
+
+		bool contains(int x, int y) const override;
+		int getMinX() const override;
+		int getMaxX() const override;
+		int getMinY() const override;
+		int getMaxY() const override;
+
+	private:
+		float center_x, center_y;
+		float semi_x, semi_y;
+	};
+
 	//Multiply-connected region: an outer shape with zero or more holes cut out of it,
 	//composed from any Shape2D-derived shapes (a polygon with circular holes, a circle
 	//with polygonal holes, etc.) -- issue tracked as "topology-aware ROI" phase 1a.

@@ -1,5 +1,5 @@
 /*
- Local build-verification test for Shape2D/Polygon2D/Circle2D, issue #9.
+ Local build-verification test for Shape2D/Polygon2D/Circle2D/Ellipse2D, issue #9.
 
  1. Known-geometry spot checks: a square (convex) and an L-shape (concave --
     the harder case for a point-in-polygon test) against hand-verified
@@ -115,6 +115,45 @@ int main()
 	bool circle_area_ok = fabs(circle_pixels - circle_analytic) < 0.05f * circle_analytic;
 	cout << "  " << (circle_area_ok ? "PASS" : "FAIL") << endl;
 	if (!circle_area_ok) failures++;
+
+	//--- ellipse (axis-aligned) ---
+	//Lopsided on purpose: semi-axes 30 and 12 on a half-pixel centre, so an
+	//implementation that swapped the axes, or rounded the centre, fails a spot check.
+	//Negative-checked 2026-10-10: axes swapped fails the spot checks and the area;
+	//the centre rounded fails the spot checks (its area is unchanged, as it would be).
+	//Not covered: boundary inclusivity, since no integer pixel lies exactly on this
+	//ellipse's boundary.
+	cout << endl << "=== Ellipse ===" << endl;
+	Ellipse2D ellipse(60.5f, 40.f, 30.f, 12.f);
+	bool ellipse_ok = ellipse.contains(60, 40)    //centre
+		&& ellipse.contains(90, 40)               //29.5 to the right: inside
+		&& !ellipse.contains(91, 40)              //30.5 to the right: outside
+		&& ellipse.contains(31, 40)               //29.5 to the left: inside
+		&& !ellipse.contains(30, 40)              //30.5 to the left: outside (a rounded centre would let it in)
+		&& ellipse.contains(60, 51)               //11 below: inside
+		&& !ellipse.contains(60, 52)              //12 below is the semi-axis, but the half-pixel
+		                                          //centre puts x=60 a hair off it: just outside
+		&& !ellipse.contains(61, 69);             //29 below: inside only if the axes were swapped
+	cout << "  " << (ellipse_ok ? "PASS" : "FAIL") << ": spot checks" << endl;
+	if (!ellipse_ok) failures++;
+
+	float ellipse_analytic = 3.14159265f * 30.f * 12.f;
+	int ellipse_pixels = (int)ellipse.getOwnedPixels().size();
+	cout << "  analytic area=" << ellipse_analytic << ", pixel count=" << ellipse_pixels << endl;
+	bool ellipse_area_ok = fabs(ellipse_pixels - ellipse_analytic) < 0.05f * ellipse_analytic;
+	cout << "  " << (ellipse_area_ok ? "PASS" : "FAIL") << endl;
+	if (!ellipse_area_ok) failures++;
+
+	bool ellipse_bounds_ok = ellipse.getMinX() == 30 && ellipse.getMaxX() == 91
+		&& ellipse.getMinY() == 28 && ellipse.getMaxY() == 52;
+	cout << "  " << (ellipse_bounds_ok ? "PASS" : "FAIL") << ": bounding box encloses it" << endl;
+	if (!ellipse_bounds_ok) failures++;
+
+	bool ellipse_refused = false;
+	try { Ellipse2D flat(10.f, 10.f, 5.f, 0.f); }
+	catch (std::string&) { ellipse_refused = true; }
+	cout << "  " << (ellipse_refused ? "PASS" : "FAIL") << ": a semi-axis of zero is refused" << endl;
+	if (!ellipse_refused) failures++;
 
 	//--- practical use: masked POI queue ---
 	cout << endl << "=== Practical use: masked POI queue from getOwnedPixels() ===" << endl;

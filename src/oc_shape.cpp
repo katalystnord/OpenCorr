@@ -181,6 +181,28 @@ namespace opencorr
 	int Circle2D::getMinY() const { return (int)std::floor(center_y - radius); }
 	int Circle2D::getMaxY() const { return (int)std::ceil(center_y + radius); }
 
+	Ellipse2D::Ellipse2D(float center_x, float center_y, float semi_x, float semi_y)
+		: center_x(center_x), center_y(center_y), semi_x(semi_x), semi_y(semi_y)
+	{
+		if (semi_x <= 0.f || semi_y <= 0.f)
+		{
+			throw std::string("Ellipse2D: both semi-axes must be positive");
+		}
+	}
+
+	bool Ellipse2D::contains(int x, int y) const
+	{
+		//in double, so a large ellipse's boundary pixels are not decided by float rounding
+		double dx = ((double)x - center_x) / semi_x;
+		double dy = ((double)y - center_y) / semi_y;
+		return dx * dx + dy * dy <= 1.0;
+	}
+
+	int Ellipse2D::getMinX() const { return (int)std::floor(center_x - semi_x); }
+	int Ellipse2D::getMaxX() const { return (int)std::ceil(center_x + semi_x); }
+	int Ellipse2D::getMinY() const { return (int)std::floor(center_y - semi_y); }
+	int Ellipse2D::getMaxY() const { return (int)std::ceil(center_y + semi_y); }
+
 	RegionWithHoles2D::RegionWithHoles2D(std::unique_ptr<Shape2D> outer, std::vector<std::unique_ptr<Shape2D>> holes)
 		: outer(std::move(outer)), holes(std::move(holes))
 	{
