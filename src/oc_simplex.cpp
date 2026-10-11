@@ -378,6 +378,14 @@ namespace opencorr
 			return;
 		}
 
+		//issue #19: this solver does not honour a mask yet, so a subset the mask reaches is
+		//refused, saying why, rather than correlated over pixels the caller excluded
+		if (subsetIsMasked((int)poi->x, (int)poi->y, subset_rx, subset_ry))
+		{
+			poi->result.zncc = (float)STATUS_MASK_NOT_SUPPORTED;
+			return;
+		}
+
 		instance->ref_subset->center = (Point2D)*poi;
 		instance->ref_subset->fill(ref_img);
 		float ref_mean_norm = instance->ref_subset->zeroMeanNorm();

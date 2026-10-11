@@ -201,31 +201,69 @@ namespace opencorr
 		float ref_norm = 0.f;
 		float tar_norm = 0.f;
 
+		//Issue #19: where the mask reaches this subset, only the pixels it keeps take part
+		//-- in both subsets, at the same subset positions, with the means taken over them
+		//and every other pixel zero after the zero-mean step, so it adds nothing to the
+		//correlation. Otherwise what shows through a hole can outweigh the specimen and the
+		//guess locks onto a background that did not move.
+		std::vector<float> weight;
+		int valid_count = subset_size;
+		if (valid_pixels != nullptr)
+		{
+			weight.assign(subset_size, 1.f);
+			valid_count = 0;
+			for (int r = 0; r < subset_height; r++)
+			{
+				for (int c = 0; c < subset_width; c++)
+				{
+					const bool ok = valid_pixels->isValid((int)poi->x + c - subset_radius_x, (int)poi->y + r - subset_radius_y);
+					weight[r * subset_width + c] = ok ? 1.f : 0.f;
+					valid_count += ok ? 1 : 0;
+				}
+			}
+			if (valid_count == 0)
+			{
+				return;
+			}
+			if (valid_count == subset_size)
+			{
+				weight.clear();
+			}
+		}
+		const bool masked = !weight.empty();
+
 		for (int r = 0; r < subset_height; r++)
 		{
 			for (int c = 0; c < subset_width; c++)
 			{
+				const float w = masked ? weight[r * subset_width + c] : 1.f;
+
 				//fill reference subset
 				Point2D ref_point(poi->x + c - subset_radius_x, poi->y + r - subset_radius_y);
 				float value = ref_img->eg_mat((int)ref_point.y, (int)ref_point.x);
 				fftcc->ref_subset[r * subset_width + c] = value;
-				ref_mean += value;
+				ref_mean += w * value;
 
 				//fill the target subset with initial guess of displacement
 				Point2D tar_point = ref_point + initial_displacement;
 				value = tar_img->eg_mat((int)tar_point.y, (int)tar_point.x);
 				fftcc->tar_subset[r * subset_width + c] = value;
-				tar_mean += value;
+				tar_mean += w * value;
 			}
 		}
-		ref_mean /= subset_size;
-		tar_mean /= subset_size;
+		ref_mean /= valid_count;
+		tar_mean /= valid_count;
 
 		//zero-mean operation of gray-scale values in the two subsets
 		for (int i = 0; i < subset_size; i++)
 		{
 			fftcc->ref_subset[i] -= ref_mean;
 			fftcc->tar_subset[i] -= tar_mean;
+			if (masked)
+			{
+				fftcc->ref_subset[i] *= weight[i];
+				fftcc->tar_subset[i] *= weight[i];
+			}
 			ref_norm += fftcc->ref_subset[i] * fftcc->ref_subset[i];
 			tar_norm += fftcc->tar_subset[i] * fftcc->tar_subset[i];
 		}

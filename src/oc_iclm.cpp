@@ -172,6 +172,14 @@ namespace opencorr
 			return;
 		}
 
+		//issue #19: this solver does not honour a mask yet, so a subset the mask reaches is
+		//refused, saying why, rather than correlated over pixels the caller excluded
+		if (subsetIsMasked((int)poi->x, (int)poi->y, subset_rx, subset_ry))
+		{
+			poi->result.zncc = (float)STATUS_MASK_NOT_SUPPORTED;
+			return;
+		}
+
 		//set subset dimension
 		int subset_width = 2 * subset_rx + 1;
 		int subset_height = 2 * subset_ry + 1;
@@ -521,6 +529,14 @@ namespace opencorr
 			|| poi->result.zncc < 0 || std::isnan(poi->deformation.u) || std::isnan(poi->deformation.v))
 		{
 			poi->result.zncc = poi->result.zncc >= 0 ? (float)STATUS_INVALID_SUBSET_OR_GUESS : poi->result.zncc;
+			return;
+		}
+
+		//issue #19: this solver does not honour a mask yet, so a subset the mask reaches is
+		//refused, saying why, rather than correlated over pixels the caller excluded
+		if (subsetIsMasked((int)poi->x, (int)poi->y, subset_rx, subset_ry))
+		{
+			poi->result.zncc = (float)STATUS_MASK_NOT_SUPPORTED;
 			return;
 		}
 		int subset_width = 2 * subset_rx + 1;

@@ -20,6 +20,7 @@
 #include<memory>
 #include<string>
 
+#include "oc_mask.h"
 #include "oc_poi.h"
 #include "oc_subset.h"
 
@@ -49,6 +50,8 @@ namespace opencorr
 		STATUS_RELIABILITY_GUIDED_REJECTED = -6, //quality or spatial jump-tolerance gate not met during RG-DIC propagation (ReliabilityGuided2D)
 		STATUS_SEQUENCE_JUMP_REJECTED = -7, //frame-to-frame (temporal) jump-tolerance gate not met (SequenceTracker2D)
 		STATUS_HESSIAN_SINGULAR = -8, //Hessian too ill-conditioned to invert reliably (ICGN only -- ICLM's Levenberg-Marquardt damping already handles this differently, see oc_iclm.cpp)
+		STATUS_TOO_FEW_VALID_PIXELS = -9, //too small a share of the subset is valid under the solver's ValidPixelMask2D (ICGN)
+		STATUS_MASK_NOT_SUPPORTED = -10, //the subset reaches masked pixels and this solver does not honour a mask yet (ICLM, NR, SimplexMatch2D)
 	};
 
 	//human-readable description of a StatusFlag code (or any non-negative ZNCC, described as success).
@@ -124,6 +127,18 @@ namespace opencorr
 		void setImages(Image2D& ref_img, Image2D& tar_img);
 		void setSubset(int radius_x, int radius_y);
 		void setSelfAdaptive(bool is_self_adaptive); //select if the subset is automatically set or manually set
+
+		//Correlate only over the pixels `mask` keeps (issue #19). Not owned, like the images;
+		//nullptr, the default, correlates every pixel as before. A subset with fewer than
+		//min_valid_share of its pixels valid is refused with STATUS_TOO_FEW_VALID_PIXELS. A
+		//subset the mask does not touch is computed exactly as without one.
+		static constexpr float kDefaultMinValidShare = 0.25f;
+		const ValidPixelMask2D* valid_pixels = nullptr;
+		float min_valid_share = kDefaultMinValidShare;
+		void setValidPixels(const ValidPixelMask2D* mask, float min_valid_share = kDefaultMinValidShare);
+
+		//true if a mask is set and the subset centred on (x, y) reaches an invalid pixel
+		bool subsetIsMasked(int x, int y, int radius_x, int radius_y) const;
 
 		virtual void prepare() = 0;
 		virtual void compute(POI2D* poi) = 0;

@@ -36,6 +36,18 @@ namespace opencorr
 		self_adaptive = is_self_adaptive;
 	}
 
+	void DIC::setValidPixels(const ValidPixelMask2D* mask, float min_valid_share)
+	{
+		valid_pixels = mask;
+		this->min_valid_share = min_valid_share;
+	}
+
+	bool DIC::subsetIsMasked(int x, int y, int radius_x, int radius_y) const
+	{
+		return valid_pixels != nullptr
+			&& valid_pixels->validCount(x, y, radius_x, radius_y) < (2 * radius_x + 1) * (2 * radius_y + 1);
+	}
+
 
 	//DVC
 	DVC::DVC() {}
@@ -77,6 +89,8 @@ namespace opencorr
 			{ STATUS_RELIABILITY_GUIDED_REJECTED, "rejected by reliability-guided propagation (quality or spatial jump-tolerance gate)" },
 			{ STATUS_SEQUENCE_JUMP_REJECTED, "rejected by sequence tracking (frame-to-frame jump-tolerance gate)" },
 			{ STATUS_HESSIAN_SINGULAR, "Hessian too ill-conditioned to invert reliably (ICGN only -- ICLM's Levenberg-Marquardt damping already handles this differently)" },
+			{ STATUS_TOO_FEW_VALID_PIXELS, "too small a share of the subset is valid under the mask" },
+			{ STATUS_MASK_NOT_SUPPORTED, "the subset reaches masked pixels, and this solver does not honour a mask yet" },
 		};
 	}
 

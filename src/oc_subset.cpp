@@ -20,6 +20,7 @@
 
 #include <omp.h>
 
+#include "oc_mask.h"
 #include "oc_subset.h"
 
 namespace opencorr
@@ -56,6 +57,19 @@ namespace opencorr
 		float subset_sum = eg_mat.squaredNorm();
 
 		return sqrt(subset_sum);
+	}
+
+	int Subset2D::fillWeight(const ValidPixelMask2D& mask)
+	{
+		valid_count = mask.fillWeight((int)center.x, (int)center.y, radius_x, radius_y, weight);
+		return valid_count;
+	}
+
+	float Subset2D::maskedZeroMeanNorm(const Eigen::MatrixXf& weight, int valid_count)
+	{
+		const float subset_mean = (eg_mat.array() * weight.array()).sum() / (float)valid_count;
+		eg_mat = ((eg_mat.array() - subset_mean) * weight.array()).matrix();
+		return sqrt(eg_mat.squaredNorm());
 	}
 
 	void Subset2D::markObstructed(int x, int y)

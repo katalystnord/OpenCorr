@@ -135,6 +135,33 @@ namespace opencorr
 			inv_hessian = scale.asDiagonal() * lu.inverse() * scale.asDiagonal();
 			return true;
 		}
+
+		//Issue #19. Fills `ref_subset`'s weight from the solver's mask, at the subset's
+		//current centre, and says whether the mask reaches it at all. A subset it does not
+		//reach goes down the unmasked path untouched, so a mask changes nothing away from
+		//what it masks. Returns false, with the point stamped, when too small a share of
+		//the subset is valid to correlate.
+		bool weighSubset(const DIC& dic, Subset2D& ref_subset, POI2D* poi, bool& masked)
+		{
+			masked = false;
+			if (dic.valid_pixels == nullptr)
+			{
+				return true;
+			}
+			const int valid = ref_subset.fillWeight(*dic.valid_pixels);
+			if (valid == ref_subset.size)
+			{
+				return true;
+			}
+			//both sides in float, so a share sitting exactly on the floor is kept
+			if ((float)valid < dic.min_valid_share * (float)ref_subset.size)
+			{
+				poi->result.zncc = (float)STATUS_TOO_FEW_VALID_PIXELS;
+				return false;
+			}
+			masked = true;
+			return true;
+		}
 	}
 
 	std::unique_ptr<ICGN2D1_> ICGN2D1_::allocate(int subset_radius_x, int subset_radius_y)
@@ -292,7 +319,15 @@ namespace opencorr
 		//set reference subset
 		icgn->ref_subset->center = (Point2D)*poi;
 		icgn->ref_subset->fill(ref_img);
-		float ref_mean_norm = icgn->ref_subset->zeroMeanNorm();
+		//issue #19: correlate only the pixels the mask keeps, where it reaches this subset
+		bool masked = false;
+		if (!weighSubset(*this, *icgn->ref_subset, poi, masked))
+		{
+			return;
+		}
+		float ref_mean_norm = masked
+			? icgn->ref_subset->maskedZeroMeanNorm(icgn->ref_subset->weight, icgn->ref_subset->valid_count)
+			: icgn->ref_subset->zeroMeanNorm();
 
 		//build the Hessian matrix
 		icgn->hessian.setZero();
@@ -306,6 +341,14 @@ namespace opencorr
 				int y_global = (int)poi->y + y_local;
 				float ref_gradient_x = ref_gradient->gradient_x(y_global, x_global);
 				float ref_gradient_y = ref_gradient->gradient_y(y_global, x_global);
+				if (masked)
+				{
+					//every column of the steepest-descent image is a gradient times something,
+					//so weighting the gradient takes a masked pixel out of the Hessian and,
+					//through sd_img, out of every numerator below
+					ref_gradient_x *= icgn->ref_subset->weight(r, c);
+					ref_gradient_y *= icgn->ref_subset->weight(r, c);
+				}
 
 				icgn->sd_img[r][c][0] = ref_gradient_x;
 				icgn->sd_img[r][c][1] = ref_gradient_x * x_local;
@@ -391,13 +434,19 @@ namespace opencorr
 			//Copied to a local: Eigen's array comparison binds its operand by
 			//reference, which ODR-uses the in-class constexpr and fails to link.
 			const float out_of_bounds = BicubicBspline::OUT_OF_BOUNDS;
-			if ((icgn->tar_subset->eg_mat.array() == out_of_bounds).any())
+			//a masked pixel takes no part, so it may leave the image without rejecting the point
+			const bool off_image = masked
+				? ((icgn->tar_subset->eg_mat.array() == out_of_bounds) && (icgn->ref_subset->weight.array() > 0.f)).any()
+				: (icgn->tar_subset->eg_mat.array() == out_of_bounds).any();
+			if (off_image)
 			{
 				poi->result.zncc = (float)STATUS_INVALID_SUBSET_OR_GUESS;
 				return;
 			}
 
-			float tar_mean_norm = icgn->tar_subset->zeroMeanNorm();
+			float tar_mean_norm = masked
+				? icgn->tar_subset->maskedZeroMeanNorm(icgn->ref_subset->weight, icgn->ref_subset->valid_count)
+				: icgn->tar_subset->zeroMeanNorm();
 
 			//calculate error image
 			icgn->error_img = icgn->tar_subset->eg_mat * (ref_mean_norm / tar_mean_norm) - (icgn->ref_subset->eg_mat);
@@ -525,7 +574,15 @@ namespace opencorr
 		//set reference subset
 		icgn->ref_subset->center = (Point2D)*poi;
 		icgn->ref_subset->fill(ref_img);
-		float ref_mean_norm = icgn->ref_subset->zeroMeanNorm();
+		//issue #19: correlate only the pixels the mask keeps, where it reaches this subset
+		bool masked = false;
+		if (!weighSubset(*this, *icgn->ref_subset, poi, masked))
+		{
+			return;
+		}
+		float ref_mean_norm = masked
+			? icgn->ref_subset->maskedZeroMeanNorm(icgn->ref_subset->weight, icgn->ref_subset->valid_count)
+			: icgn->ref_subset->zeroMeanNorm();
 
 		//build the Hessian matrix
 		icgn->hessian.setZero();
@@ -539,6 +596,14 @@ namespace opencorr
 				int y_global = (int)poi->y + y_local_int;
 				float ref_gradient_x = ref_gradient->gradient_x(y_global, x_global);
 				float ref_gradient_y = ref_gradient->gradient_y(y_global, x_global);
+				if (masked)
+				{
+					//every column of the steepest-descent image is a gradient times something,
+					//so weighting the gradient takes a masked pixel out of the Hessian and,
+					//through sd_img, out of every numerator below
+					ref_gradient_x *= icgn->ref_subset->weight(r, c);
+					ref_gradient_y *= icgn->ref_subset->weight(r, c);
+				}
 
 				float x_local = x_local_int - center_offset.x;
 				float y_local = y_local_int - center_offset.y;
@@ -610,13 +675,19 @@ namespace opencorr
 			//Copied to a local: Eigen's array comparison binds its operand by
 			//reference, which ODR-uses the in-class constexpr and fails to link.
 			const float out_of_bounds = BicubicBspline::OUT_OF_BOUNDS;
-			if ((icgn->tar_subset->eg_mat.array() == out_of_bounds).any())
+			//a masked pixel takes no part, so it may leave the image without rejecting the point
+			const bool off_image = masked
+				? ((icgn->tar_subset->eg_mat.array() == out_of_bounds) && (icgn->ref_subset->weight.array() > 0.f)).any()
+				: (icgn->tar_subset->eg_mat.array() == out_of_bounds).any();
+			if (off_image)
 			{
 				poi->result.zncc = (float)STATUS_INVALID_SUBSET_OR_GUESS;
 				return;
 			}
 
-			float tar_mean_norm = icgn->tar_subset->zeroMeanNorm();
+			float tar_mean_norm = masked
+				? icgn->tar_subset->maskedZeroMeanNorm(icgn->ref_subset->weight, icgn->ref_subset->valid_count)
+				: icgn->tar_subset->zeroMeanNorm();
 
 			//calculate error image
 			icgn->error_img = icgn->tar_subset->eg_mat * (ref_mean_norm / tar_mean_norm) - (icgn->ref_subset->eg_mat);
@@ -868,7 +939,15 @@ namespace opencorr
 		//set reference subset
 		icgn->ref_subset->center = (Point2D)*poi;
 		icgn->ref_subset->fill(ref_img);
-		float ref_mean_norm = icgn->ref_subset->zeroMeanNorm();
+		//issue #19: correlate only the pixels the mask keeps, where it reaches this subset
+		bool masked = false;
+		if (!weighSubset(*this, *icgn->ref_subset, poi, masked))
+		{
+			return;
+		}
+		float ref_mean_norm = masked
+			? icgn->ref_subset->maskedZeroMeanNorm(icgn->ref_subset->weight, icgn->ref_subset->valid_count)
+			: icgn->ref_subset->zeroMeanNorm();
 
 		//build the Hessian matrix
 		icgn->hessian.setZero();
@@ -885,6 +964,14 @@ namespace opencorr
 				int y_global = (int)poi->y + y_local;
 				float ref_gradient_x = ref_gradient->gradient_x(y_global, x_global);
 				float ref_gradient_y = ref_gradient->gradient_y(y_global, x_global);
+				if (masked)
+				{
+					//every column of the steepest-descent image is a gradient times something,
+					//so weighting the gradient takes a masked pixel out of the Hessian and,
+					//through sd_img, out of every numerator below
+					ref_gradient_x *= icgn->ref_subset->weight(r, c);
+					ref_gradient_y *= icgn->ref_subset->weight(r, c);
+				}
 
 				icgn->sd_img[r][c][0] = ref_gradient_x;
 				icgn->sd_img[r][c][1] = ref_gradient_x * x_local;
@@ -958,13 +1045,19 @@ namespace opencorr
 			//Copied to a local: Eigen's array comparison binds its operand by
 			//reference, which ODR-uses the in-class constexpr and fails to link.
 			const float out_of_bounds = BicubicBspline::OUT_OF_BOUNDS;
-			if ((icgn->tar_subset->eg_mat.array() == out_of_bounds).any())
+			//a masked pixel takes no part, so it may leave the image without rejecting the point
+			const bool off_image = masked
+				? ((icgn->tar_subset->eg_mat.array() == out_of_bounds) && (icgn->ref_subset->weight.array() > 0.f)).any()
+				: (icgn->tar_subset->eg_mat.array() == out_of_bounds).any();
+			if (off_image)
 			{
 				poi->result.zncc = (float)STATUS_INVALID_SUBSET_OR_GUESS;
 				return;
 			}
 
-			float tar_mean_norm = icgn->tar_subset->zeroMeanNorm();
+			float tar_mean_norm = masked
+				? icgn->tar_subset->maskedZeroMeanNorm(icgn->ref_subset->weight, icgn->ref_subset->valid_count)
+				: icgn->tar_subset->zeroMeanNorm();
 
 			//calculate error image
 			icgn->error_img = icgn->tar_subset->eg_mat * (ref_mean_norm / tar_mean_norm) - (icgn->ref_subset->eg_mat);
@@ -1107,7 +1200,15 @@ namespace opencorr
 		//set reference subset
 		icgn->ref_subset->center = (Point2D)*poi;
 		icgn->ref_subset->fill(ref_img);
-		float ref_mean_norm = icgn->ref_subset->zeroMeanNorm();
+		//issue #19: correlate only the pixels the mask keeps, where it reaches this subset
+		bool masked = false;
+		if (!weighSubset(*this, *icgn->ref_subset, poi, masked))
+		{
+			return;
+		}
+		float ref_mean_norm = masked
+			? icgn->ref_subset->maskedZeroMeanNorm(icgn->ref_subset->weight, icgn->ref_subset->valid_count)
+			: icgn->ref_subset->zeroMeanNorm();
 
 		//build the Hessian matrix
 		icgn->hessian.setZero();
@@ -1121,6 +1222,14 @@ namespace opencorr
 				int y_global = (int)poi->y + y_local_int;
 				float ref_gradient_x = ref_gradient->gradient_x(y_global, x_global);
 				float ref_gradient_y = ref_gradient->gradient_y(y_global, x_global);
+				if (masked)
+				{
+					//every column of the steepest-descent image is a gradient times something,
+					//so weighting the gradient takes a masked pixel out of the Hessian and,
+					//through sd_img, out of every numerator below
+					ref_gradient_x *= icgn->ref_subset->weight(r, c);
+					ref_gradient_y *= icgn->ref_subset->weight(r, c);
+				}
 
 				float x_local = x_local_int - center_offset.x;
 				float y_local = y_local_int - center_offset.y;
@@ -1200,12 +1309,18 @@ namespace opencorr
 			//Copied to a local: Eigen's array comparison binds its operand by
 			//reference, which ODR-uses the in-class constexpr and fails to link.
 			const float out_of_bounds = BicubicBspline::OUT_OF_BOUNDS;
-			if ((icgn->tar_subset->eg_mat.array() == out_of_bounds).any())
+			//a masked pixel takes no part, so it may leave the image without rejecting the point
+			const bool off_image = masked
+				? ((icgn->tar_subset->eg_mat.array() == out_of_bounds) && (icgn->ref_subset->weight.array() > 0.f)).any()
+				: (icgn->tar_subset->eg_mat.array() == out_of_bounds).any();
+			if (off_image)
 			{
 				poi->result.zncc = (float)STATUS_INVALID_SUBSET_OR_GUESS;
 				return;
 			}
-			float tar_mean_norm = icgn->tar_subset->zeroMeanNorm();
+			float tar_mean_norm = masked
+				? icgn->tar_subset->maskedZeroMeanNorm(icgn->ref_subset->weight, icgn->ref_subset->valid_count)
+				: icgn->tar_subset->zeroMeanNorm();
 
 			//calculate error image
 			icgn->error_img = icgn->tar_subset->eg_mat * (ref_mean_norm / tar_mean_norm) - (icgn->ref_subset->eg_mat);

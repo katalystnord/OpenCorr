@@ -38,13 +38,10 @@ namespace opencorr
 	//Scope note -- this is deliberately phase 1 (data model) only: pixel-membership
 	//testing for an arbitrary polygon or circle, i.e. "does pixel (x, y) fall inside this
 	//region." That alone is already directly useful for masked POI-queue construction (see
-	//getOwnedPixels() below -- build a POI grid restricted to a hand-drawn ROI). What's
-	//explicitly NOT included here is threading mask-awareness through OpenCorr's actual
-	//correlation kernels (Subset2D::fill(), the gradient computation in oc_gradient.cpp,
-	//interpolation/warping inside ICGN2D1/ICLM2D1) so a single SUBSET's own interior could
-	//be non-rectangular -- those all currently assume a dense rectangular pixel grid, and
-	//making them mask-aware is a separate, larger, cross-cutting effort once there's a
-	//concrete need pulling it forward.
+	//getOwnedPixels() below -- build a POI grid restricted to a hand-drawn ROI). A shape
+	//also reaches the correlation itself, since issue #19: a ValidPixelMask2D (oc_mask.h)
+	//built from one tells the ICGN solvers, FFTCC2D and Uncertainty2D which of a subset's
+	//pixels to correlate over.
 	//
 	//Point-in-polygon test is DICe's own method (a signed winding-angle sum around the
 	//polygon's edges, not the more common ray-casting test) -- ported as-is rather than
@@ -177,6 +174,39 @@ namespace opencorr
 	private:
 		std::unique_ptr<Shape2D> outer;
 		std::vector<std::unique_ptr<Shape2D>> holes;
+	};
+
+	//A region built from shapes ADDED and CUT in order, where the last shape containing a
+	//pixel decides, as paint does -- so a later addition can put an island back inside an
+	//earlier cut, which RegionWithHoles2D cannot express. A pixel no shape contains is
+	//outside. RegionWithHoles2D is the special case "add the outer, then cut each hole".
+	//Added for issue #19, where a region is handed to ValidPixelMask2D as one shape.
+	//
+	//The bounding box is the union of the ADDED shapes' boxes: a cut can only remove.
+	//Empty (no added shape) reports min > max.
+	class OrderedRegion2D : public Shape2D
+	{
+	public:
+		OrderedRegion2D() = default;
+
+		void add(std::unique_ptr<Shape2D> shape);
+		void cut(std::unique_ptr<Shape2D> shape);
+
+		bool contains(int x, int y) const override;
+		int getMinX() const override;
+		int getMaxX() const override;
+		int getMinY() const override;
+		int getMaxY() const override;
+
+		int numShapes() const;
+
+	private:
+		struct Step
+		{
+			std::unique_ptr<Shape2D> shape;
+			bool cut;
+		};
+		std::vector<Step> steps;
 	};
 
 }//namespace opencorr

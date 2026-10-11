@@ -32,6 +32,8 @@
 
 namespace opencorr
 {
+	class ValidPixelMask2D;
+
 	class Subset2D
 	{
 	public:
@@ -48,6 +50,19 @@ namespace opencorr
 		void fill(Image2D* image);
 		float zeroMeanNorm();
 
+		//Issue #19: which of this subset's pixels count, as a 0/1 weight filled from a
+		//ValidPixelMask2D at the subset's current centre. Returns the valid count, also
+		//kept in valid_count. Empty until filled.
+		Eigen::MatrixXf weight;
+		int valid_count = 0;
+		int fillWeight(const ValidPixelMask2D& mask);
+
+		//zeroMeanNorm() over the pixels `weight` keeps: the mean is taken over those
+		//pixels alone, and every other pixel is set to zero, so it drops out of any sum
+		//the subset later takes part in. `weight` is passed rather than read from this
+		//subset because a target subset is masked by its REFERENCE subset's weight.
+		float maskedZeroMeanNorm(const Eigen::MatrixXf& weight, int valid_count);
+
 		//Dynamic obstruction/occlusion masking, ported from DICe's
 		//Subset::turn_off_obstructed_pixels()/turn_on_previously_obstructed_pixels()/
 		//is_obstructed_pixel() concept (dicengine/dice, src/base/DICe_Subset.h/.cpp,
@@ -62,15 +77,10 @@ namespace opencorr
 		//scene-wide semantics instead of requiring every subset/POI overlapping an
 		//obstruction to be marked individually.
 		//
-		//Scope note -- this is deliberately phase 1 (data model) only, mirroring
-		//oc_shape.h's own phase 1/phase 2 split for conformal ROI shapes: marking/querying
-		//which global pixels are currently obstructed. What's explicitly NOT included here
-		//is threading obstruction-awareness through fill()/zeroMeanNorm() (so an obstructed
-		//pixel is actually excluded from the subset's mean/norm) or through ICGN/ICLM's
-		//Hessian-build and ZNSSD loops (so it's excluded from the correlation itself) --
-		//that's a separate, larger, cross-cutting effort (the same one oc_shape.h's own
-		//scope note describes for conformal shapes) once there's a concrete need pulling it
-		//forward.
+		//Scope note -- this set is still data only: the solvers do not read it. What they do
+		//read, since issue #19, is a ValidPixelMask2D (oc_mask.h) set on the solver, which
+		//a caller can build from the same pixels; a solver's subsets are its own, so an
+		//obstruction marked on one of them could never reach it anyway.
 		void markObstructed(int x, int y);
 		void clearObstructed(int x, int y);
 		void clearAllObstructed();

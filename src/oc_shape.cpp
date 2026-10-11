@@ -20,6 +20,9 @@
 
 #include <cmath>
 
+#include <algorithm>
+#include <limits>
+
 #include "oc_shape.h"
 
 namespace opencorr
@@ -242,5 +245,67 @@ namespace opencorr
 	int RegionWithHoles2D::getMaxX() const { return outer->getMaxX(); }
 	int RegionWithHoles2D::getMinY() const { return outer->getMinY(); }
 	int RegionWithHoles2D::getMaxY() const { return outer->getMaxY(); }
+
+	void OrderedRegion2D::add(std::unique_ptr<Shape2D> shape)
+	{
+		if (shape == nullptr)
+		{
+			throw std::string("OrderedRegion2D: shape must not be null");
+		}
+		steps.push_back({ std::move(shape), false });
+	}
+
+	void OrderedRegion2D::cut(std::unique_ptr<Shape2D> shape)
+	{
+		if (shape == nullptr)
+		{
+			throw std::string("OrderedRegion2D: shape must not be null");
+		}
+		steps.push_back({ std::move(shape), true });
+	}
+
+	bool OrderedRegion2D::contains(int x, int y) const
+	{
+		//walked from the last shape back, so the first one found is the one that decides
+		for (auto step = steps.rbegin(); step != steps.rend(); ++step)
+		{
+			if (step->shape->contains(x, y))
+			{
+				return !step->cut;
+			}
+		}
+		return false;
+	}
+
+	//the union of the added shapes' boxes; min > max when nothing is added
+	int OrderedRegion2D::getMinX() const
+	{
+		int value = std::numeric_limits<int>::max();
+		for (const auto& step : steps) if (!step.cut) value = std::min(value, step.shape->getMinX());
+		return value == std::numeric_limits<int>::max() ? 0 : value;
+	}
+
+	int OrderedRegion2D::getMaxX() const
+	{
+		int value = std::numeric_limits<int>::min();
+		for (const auto& step : steps) if (!step.cut) value = std::max(value, step.shape->getMaxX());
+		return value == std::numeric_limits<int>::min() ? -1 : value;
+	}
+
+	int OrderedRegion2D::getMinY() const
+	{
+		int value = std::numeric_limits<int>::max();
+		for (const auto& step : steps) if (!step.cut) value = std::min(value, step.shape->getMinY());
+		return value == std::numeric_limits<int>::max() ? 0 : value;
+	}
+
+	int OrderedRegion2D::getMaxY() const
+	{
+		int value = std::numeric_limits<int>::min();
+		for (const auto& step : steps) if (!step.cut) value = std::max(value, step.shape->getMaxY());
+		return value == std::numeric_limits<int>::min() ? -1 : value;
+	}
+
+	int OrderedRegion2D::numShapes() const { return (int)steps.size(); }
 
 }//namespace opencorr

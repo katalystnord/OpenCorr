@@ -181,7 +181,8 @@ namespace opencorr
 				//intensity -- NaN signals "this probe direction can't be evaluated" to the
 				//caller, which must abstain (undefined = true) rather than silently computing
 				//a slope from fabricated data
-				if (sample == BicubicBspline::OUT_OF_BOUNDS)
+				if (sample == BicubicBspline::OUT_OF_BOUNDS
+					&& !(instance->masked && instance->ref_subset->weight(r, c) == 0.f))
 				{
 					return std::numeric_limits<float>::quiet_NaN();
 				}
@@ -189,7 +190,9 @@ namespace opencorr
 			}
 		}
 
-		float tar_mean_norm = instance->tar_subset->zeroMeanNorm();
+		float tar_mean_norm = instance->masked
+			? instance->tar_subset->maskedZeroMeanNorm(instance->ref_subset->weight, instance->ref_subset->valid_count)
+			: instance->tar_subset->zeroMeanNorm();
 		if (tar_mean_norm <= 0.f)
 		{
 			//degenerate warped subset (e.g. entirely uniform after warping) -- same "can't
@@ -228,6 +231,23 @@ namespace opencorr
 		int subset_height = 2 * subset_ry + 1;
 
 		//--- sigma: closed-form displacement-uncertainty estimate ---
+		//issue #19: both figures describe the pixels that took part in the correlation, so
+		//where the mask reaches this subset they are taken over its valid pixels alone --
+		//otherwise sigma would claim the gradient energy of pixels that were never used
+		instance->ref_subset->center = (Point2D)*poi;
+		instance->masked = false;
+		if (valid_pixels != nullptr)
+		{
+			const int valid = instance->ref_subset->fillWeight(*valid_pixels);
+			if (valid == 0)
+			{
+				poi->result.sigma = -1.f;
+				poi->result.beta = -1.f;
+				return;
+			}
+			instance->masked = valid < instance->ref_subset->size;
+		}
+
 		double sum_gx2 = 0.0, sum_gy2 = 0.0;
 		for (int r = 0; r < subset_height; r++)
 		{
@@ -237,6 +257,11 @@ namespace opencorr
 				int y_global = (int)poi->y + (r - subset_ry);
 				float gx = ref_gradient->gradient_x(y_global, x_global);
 				float gy = ref_gradient->gradient_y(y_global, x_global);
+				if (instance->masked)
+				{
+					gx *= instance->ref_subset->weight(r, c);
+					gy *= instance->ref_subset->weight(r, c);
+				}
 				sum_gx2 += (double)gx * gx;
 				sum_gy2 += (double)gy * gy;
 			}
@@ -248,9 +273,10 @@ namespace opencorr
 			: -1.f; //degenerate subset (e.g. uniform intensity): uncertainty cannot be estimated
 
 		//--- beta: cost-function-conditioning probe around the converged solution ---
-		instance->ref_subset->center = (Point2D)*poi;
 		instance->ref_subset->fill(ref_img);
-		float ref_mean_norm = instance->ref_subset->zeroMeanNorm();
+		float ref_mean_norm = instance->masked
+			? instance->ref_subset->maskedZeroMeanNorm(instance->ref_subset->weight, instance->ref_subset->valid_count)
+			: instance->ref_subset->zeroMeanNorm();
 
 		if (ref_mean_norm <= 0.f)
 		{

@@ -65,6 +65,7 @@ namespace opencorr
 	public:
 		std::unique_ptr<Subset2D> ref_subset;
 		std::unique_ptr<Subset2D> tar_subset;
+		bool masked = false; //issue #19: whether the solver's mask reaches the current subset
 
 		static std::unique_ptr<Uncertainty2D_> allocate(int subset_radius_x, int subset_radius_y);
 		static void release(std::unique_ptr<Uncertainty2D_>& instance);

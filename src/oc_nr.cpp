@@ -178,6 +178,14 @@ namespace opencorr
 			return;
 		}
 
+		//issue #19: this solver does not honour a mask yet, so a subset the mask reaches is
+		//refused, saying why, rather than correlated over pixels the caller excluded
+		if (subsetIsMasked((int)poi->x, (int)poi->y, subset_radius_x, subset_radius_y))
+		{
+			poi->result.zncc = (float)STATUS_MASK_NOT_SUPPORTED;
+			return;
+		}
+
 		int subset_width = 2 * subset_radius_x + 1;
 		int subset_height = 2 * subset_radius_y + 1;
 
