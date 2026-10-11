@@ -108,7 +108,8 @@ namespace opencorr
 		std::vector<std::unique_ptr<SimplexMatch2D_>> instance_pool;
 		std::unique_ptr<SimplexMatch2D_>& getInstance(int tid);
 
-		float znssd(SimplexMatch2D_* instance, float ref_mean_norm, const std::vector<float>& p, int subset_rx, int subset_ry);
+		//`masked`: weigh the cost by the reference subset's weight (issue #19)
+		float znssd(SimplexMatch2D_* instance, float ref_mean_norm, const std::vector<float>& p, int subset_rx, int subset_ry, bool masked);
 
 	public:
 		SimplexMatch2D(int subset_radius_x, int subset_radius_y, int thread_number);

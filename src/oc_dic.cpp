@@ -48,6 +48,28 @@ namespace opencorr
 			&& valid_pixels->validCount(x, y, radius_x, radius_y) < (2 * radius_x + 1) * (2 * radius_y + 1);
 	}
 
+	bool DIC::weighSubset(Subset2D& ref_subset, POI2D* poi, bool& masked) const
+	{
+		masked = false;
+		if (valid_pixels == nullptr)
+		{
+			return true;
+		}
+		const int valid = ref_subset.fillWeight(*valid_pixels);
+		if (valid == ref_subset.size)
+		{
+			return true;
+		}
+		//both sides in float, so a share sitting exactly on the floor is kept
+		if ((float)valid < min_valid_share * (float)ref_subset.size)
+		{
+			poi->result.zncc = (float)STATUS_TOO_FEW_VALID_PIXELS;
+			return false;
+		}
+		masked = true;
+		return true;
+	}
+
 
 	//DVC
 	DVC::DVC() {}

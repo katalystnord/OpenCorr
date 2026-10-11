@@ -33,9 +33,10 @@
     exactly at it.
  6. Out-of-bounds target samples at MASKED pixels do not reject a point; the
     same point unmasked is rejected, which proves the case is the right one.
- 7. ICLM2D1, ICLM2D2, NR2D1 and SimplexMatch2D refuse a point whose subset the
-    mask reaches with STATUS_MASK_NOT_SUPPORTED, and solve one it does not
-    reach exactly as without a mask.
+ 7. ICLM2D1, ICLM2D2, NR2D1 and SimplexMatch2D, each beside a moving hole:
+    masked at the far-field level where unmasked is pulled off, the far field
+    bit-identical, the floor, blind to the bit to what shows through the hole,
+    and masked pixels carried off the target not rejecting the point.
  8. Both new statuses are described and count as failures.
  9. Uncertainty2D: sigma over the valid pixels only (larger beside the hole
     than the full subset would claim), unchanged where the mask does not reach.
@@ -68,6 +69,26 @@
  wrong FFTCC mean biases the guess toward no movement, which a high-contrast
  speckle outweighs; a faint one on bright paint does not.
 
+ IC-LM, NR AND SIMPLEX (2026-10-12), which until then refused a masked subset
+ with STATUS_MASK_NOT_SUPPORTED. Written red first: 24 checks failed against the
+ refusal. Two needed thought rather than code. Unmasked, ICLM2D2 on the affine
+ field mostly ran out of its 20 iterations instead of converging wrong, so the
+ check that the fixture bites failed; given 200 it converges, 0.46 px off. And
+ NR moved 7e-5 px when the background behind the hole changed, a tighter
+ convergence criterion changing nothing: forward-additive NR stops where the
+ Jacobian times the residual vanishes, and its Jacobian is the TARGET's gradient,
+ interpolated from a gradient image whose stencil reaches 2 px further than the
+ intensity's. Pixels whose gradient reaches masked ground now stay in the cost
+ and leave the Jacobian. NEGATIVE CHECKS, 26 mutations, 25 caught: in both IC-LM
+ bodies, the gradient unweighted (both axes, and one), the off-image test on every
+ pixel, the target norm and the reference norm unmasked, the mask never applied;
+ in NR, the Jacobian not eroded, eroded by 1 px, unweighted, the off-image test on
+ every pixel, either norm unmasked, the mask never applied; in Simplex, a masked
+ pixel not skipped, either norm unmasked, the cost not told it is masked, the mask
+ never applied; the shared floor compared with <=. ICLM2D2's gradient unweighted
+ is caught only by the background swap: its error stays at 0.009 px, under the
+ far-field limit.
+
  One survives, and cannot be caught: sending every subset down the masked path.
  With nothing masked, that path computes the same bits as the unmasked one, so
  the bit-identity check passes either way. The unmasked path is kept for speed
@@ -77,6 +98,7 @@
 #include <cmath>
 #include <iostream>
 #include <random>
+#include <type_traits>
 #include <vector>
 
 #include "opencorr.h"
@@ -277,29 +299,40 @@ namespace
 		return to_string(error) + " px, " + to_string(solved) + "/" + to_string(of) + " solved";
 	}
 
-	//Runs `solver` over `points`, masked or not, through the plain or the
-	//center_offset overload.
+	//Which compute() overload a check goes through: the plain one, or ICGN's
+	//center_offset one. A tag rather than a bool, because IC-LM, NR and Simplex have
+	//no center_offset overload and a bool would still have to compile the call.
+	typedef std::false_type Plain;
+	typedef std::true_type WithOffset;
+
 	template<typename Solver>
-	vector<POI2D> run(Solver& solver, const vector<Point2D>& points, const Motion& motion,
-		const ValidPixelMask2D* mask, bool with_offset)
+	void computeQueue(Solver& solver, vector<POI2D>& queue, Plain)
 	{
-		solver.setValidPixels(mask);
-		vector<POI2D> queue = seeded(points, motion);
-		if (with_offset)
-		{
-			vector<Point2D> offsets(queue.size(), Point2D(0.f, 0.f));
-			solver.compute(queue, offsets);
-		}
-		else
-		{
-			solver.compute(queue);
-		}
-		return queue;
+		solver.compute(queue);
 	}
 
 	template<typename Solver>
+	void computeQueue(Solver& solver, vector<POI2D>& queue, WithOffset)
+	{
+		vector<Point2D> offsets(queue.size(), Point2D(0.f, 0.f));
+		solver.compute(queue, offsets);
+	}
+
+	//Runs `solver` over `points`, masked or not, through the plain or the
+	//center_offset overload.
+	template<typename Solver, typename Overload = Plain>
+	vector<POI2D> run(Solver& solver, const vector<Point2D>& points, const Motion& motion,
+		const ValidPixelMask2D* mask, Overload overload = Overload())
+	{
+		solver.setValidPixels(mask);
+		vector<POI2D> queue = seeded(points, motion);
+		computeQueue(solver, queue, overload);
+		return queue;
+	}
+
+	template<typename Solver, typename Overload = Plain>
 	void accuracyChecks(const string& name, Solver& solver, Image2D& ref, Image2D& tar,
-		const Motion& motion, const ValidPixelMask2D& mask, bool with_offset, float masked_limit)
+		const Motion& motion, const ValidPixelMask2D& mask, float masked_limit, Overload with_offset = Overload())
 	{
 		solver.setImages(ref, tar);
 		solver.prepare();
@@ -328,6 +361,26 @@ namespace
 				&& far_masked[i].result.zncc > 0.f;
 		}
 		check(name + ": a subset the mask does not touch is bit-identical", identical);
+	}
+
+	//The floor, for any solver: refused just above a point's share, kept exactly at it.
+	template<typename Solver>
+	void floorChecks(const string& name, Solver& solver, const ValidPixelMask2D& mask, const Motion& motion)
+	{
+		const Point2D p((float)(kHoleX + (int)kHoleRadius + 3), (float)(kHoleY + 1));
+		const float share = mask.validShare((int)p.x, (int)p.y, kRadius, kRadius);
+
+		vector<POI2D> refused = seeded({ p }, motion);
+		solver.setValidPixels(&mask, share + 0.01f);
+		solver.compute(refused);
+		check(name + ": below the floor, STATUS_TOO_FEW_VALID_PIXELS",
+			refused[0].result.zncc == (float)STATUS_TOO_FEW_VALID_PIXELS, to_string(refused[0].result.zncc));
+
+		vector<POI2D> kept = seeded({ p }, motion);
+		solver.setValidPixels(&mask, share);
+		solver.compute(kept);
+		check(name + ": exactly at the floor, kept", kept[0].result.zncc > 0.f, to_string(kept[0].result.zncc));
+		solver.setValidPixels(nullptr);
 	}
 }
 
@@ -442,16 +495,16 @@ int main()
 	cout << endl << "=== ICGN2D1 ===" << endl;
 	{
 		ICGN2D1 icgn(kRadius, kRadius, 0.001f, 20, 1);
-		accuracyChecks("translation", icgn, ref, tar_shift, shift, mask, false, 0.02f);
-		accuracyChecks("translation, center_offset overload", icgn, ref, tar_shift, shift, mask, true, 0.02f);
-		accuracyChecks("affine", icgn, ref, tar_affine, affine, mask, false, 0.03f);
+		accuracyChecks("translation", icgn, ref, tar_shift, shift, mask, 0.02f);
+		accuracyChecks("translation, center_offset overload", icgn, ref, tar_shift, shift, mask, 0.02f, WithOffset());
+		accuracyChecks("affine", icgn, ref, tar_affine, affine, mask, 0.03f);
 	}
 	cout << endl << "=== ICGN2D2 ===" << endl;
 	{
 		ICGN2D2 icgn(kRadius, kRadius, 0.001f, 20, 1);
-		accuracyChecks("translation", icgn, ref, tar_shift, shift, mask, false, 0.02f);
-		accuracyChecks("translation, center_offset overload", icgn, ref, tar_shift, shift, mask, true, 0.02f);
-		accuracyChecks("affine", icgn, ref, tar_affine, affine, mask, false, 0.03f);
+		accuracyChecks("translation", icgn, ref, tar_shift, shift, mask, 0.02f);
+		accuracyChecks("translation, center_offset overload", icgn, ref, tar_shift, shift, mask, 0.02f, WithOffset());
+		accuracyChecks("affine", icgn, ref, tar_affine, affine, mask, 0.03f);
 	}
 
 	//--- 4b. what shows through the hole does not count ---
@@ -472,7 +525,7 @@ int main()
 			ICGN2D1 icgn(kRadius, kRadius, 0.001f, 20, 1);
 			icgn.setImages(r, t);
 			icgn.prepare();
-			vector<POI2D> queue = run(icgn, near, shift, &mask, false);
+			vector<POI2D> queue = run(icgn, near, shift, &mask);
 			Uncertainty2D uncertainty(kRadius, kRadius, 1);
 			uncertainty.setImages(r, t);
 			uncertainty.prepare();
@@ -587,20 +640,20 @@ int main()
 		icgn2.prepare();
 
 		int solved = 0;
-		vector<POI2D> plain = run(icgn1, { p }, shift, nullptr, false);
+		vector<POI2D> plain = run(icgn1, { p }, shift, nullptr);
 		check("unmasked, the point is rejected for leaving the image (the case is the right one)",
 			plain[0].result.zncc == (float)STATUS_INVALID_SUBSET_OR_GUESS, to_string(plain[0].result.zncc));
-		const float e1 = meanError(run(icgn1, { p }, shift, &edge_mask, false), shift, solved);
+		const float e1 = meanError(run(icgn1, { p }, shift, &edge_mask), shift, solved);
 		check("ICGN2D1 masked: measured, accurately", solved == 1 && e1 < 0.02f, describe(e1, solved, 1));
-		const float e1o = meanError(run(icgn1, { p }, shift, &edge_mask, true), shift, solved);
+		const float e1o = meanError(run(icgn1, { p }, shift, &edge_mask, WithOffset()), shift, solved);
 		check("ICGN2D1 center_offset masked: measured", solved == 1 && e1o < 0.02f, describe(e1o, solved, 1));
-		const float e2 = meanError(run(icgn2, { p }, shift, &edge_mask, false), shift, solved);
+		const float e2 = meanError(run(icgn2, { p }, shift, &edge_mask), shift, solved);
 		check("ICGN2D2 masked: measured, accurately", solved == 1 && e2 < 0.02f, describe(e2, solved, 1));
-		const float e2o = meanError(run(icgn2, { p }, shift, &edge_mask, true), shift, solved);
+		const float e2o = meanError(run(icgn2, { p }, shift, &edge_mask, WithOffset()), shift, solved);
 		check("ICGN2D2 center_offset masked: measured", solved == 1 && e2o < 0.02f, describe(e2o, solved, 1));
 
 		//and its reliability figures, whose probes carry the same masked pixels off the image
-		vector<POI2D> measured = run(icgn1, { p }, shift, &edge_mask, false);
+		vector<POI2D> measured = run(icgn1, { p }, shift, &edge_mask);
 		Uncertainty2D uncertainty(kRadius, kRadius, 1);
 		uncertainty.setImages(ref, tar_shift);
 		uncertainty.prepare();
@@ -611,41 +664,74 @@ int main()
 			to_string(measured[0].result.sigma) + ", " + to_string(measured[0].result.beta));
 	}
 
-	//--- 7. solvers that do not honour a mask yet ---
-	cout << endl << "=== solvers without mask support refuse, and only where it matters ===" << endl;
+	//--- 7. IC-LM, NR and Simplex beside a moving hole ---
+	//Each measures the specimen, not the hole, holds the far field to the bit, refuses
+	//below the floor, is blind to what shows through the hole, and lets a masked pixel
+	//leave the target without rejecting the point.
 	{
-		const vector<Point2D> near = { besideTheHole()[0] };
-		const vector<Point2D> far = { farFromTheHole()[0] };
+		const Speckle other(kWidth, kHeight, 4321u, 120.f, 60.f);
+		Image2D ref_other(kWidth, kHeight), tar_other(kWidth, kHeight);
+		render(shift, specimen, other, ref_other, tar_other);
 
-		auto refuses = [&](const string& name, auto& solver) {
+		OrderedRegion2D right_cut;
+		right_cut.add(make_unique<Polygon2D>(vector<int>{ 0, kWidth - 1, kWidth - 1, 0 },
+			vector<int>{ 0, 0, kHeight - 1, kHeight - 1 }));
+		right_cut.cut(make_unique<Polygon2D>(vector<int>{ 232, kWidth + 10, kWidth + 10, 232 },
+			vector<int>{ -10, -10, kHeight + 10, kHeight + 10 }));
+		const ValidPixelMask2D edge_mask(right_cut, kWidth, kHeight, 2);
+		const Point2D edge_point((float)(kWidth - 1 - kRadius), 60.f);
+
+		auto suite = [&](const string& name, auto& solver, bool affine_too, float limit) {
+			cout << endl << "=== " << name << " beside a moving hole measures the specimen, not the hole ===" << endl;
+			accuracyChecks(name + " translation", solver, ref, tar_shift, shift, mask, limit);
+			if (affine_too)
+			{
+				accuracyChecks(name + " affine", solver, ref, tar_affine, affine, mask, 1.5f * limit);
+			}
+
 			solver.setImages(ref, tar_shift);
 			solver.prepare();
-			solver.setValidPixels(&mask);
-			vector<POI2D> touched = seeded(near, shift);
-			solver.compute(touched);
-			check(name + ": a masked subset is refused, saying why",
-				touched[0].result.zncc == (float)STATUS_MASK_NOT_SUPPORTED, to_string(touched[0].result.zncc));
+			floorChecks(name, solver, mask, shift);
 
-			vector<POI2D> untouched = seeded(far, shift);
-			solver.compute(untouched);
+			//what shows through the hole takes no part: masked, every figure beside it stays put
+			const vector<Point2D> near = besideTheHole();
+			const vector<POI2D> a = run(solver, near, shift, &mask);
+			solver.setImages(ref_other, tar_other);
+			solver.prepare();
+			const vector<POI2D> b = run(solver, near, shift, &mask);
+			float du = 0.f, dz = 0.f;
+			bool all_solved = true;
+			for (size_t i = 0; i < near.size(); i++)
+			{
+				du = max(du, hypot(a[i].deformation.u - b[i].deformation.u, a[i].deformation.v - b[i].deformation.v));
+				dz = max(dz, fabs(a[i].result.zncc - b[i].result.zncc));
+				all_solved = all_solved && a[i].result.zncc > 0.f && b[i].result.zncc > 0.f;
+			}
+			check(name + ": a different background behind the hole changes nothing beside it, to the bit",
+				all_solved && du == 0.f && dz == 0.f, to_string(du) + " px, " + to_string(dz) + " apart");
+
+			//masked pixels carried off the target do not reject the point
+			solver.setImages(ref, tar_shift);
+			solver.prepare();
+			int solved = 0;
+			const float e = meanError(run(solver, { edge_point }, shift, &edge_mask), shift, solved);
+			check(name + ": masked pixels off the target do not reject the point", solved == 1 && e < limit,
+				describe(e, solved, 1));
 			solver.setValidPixels(nullptr);
-			vector<POI2D> without = seeded(far, shift);
-			solver.compute(without);
-			check(name + ": a subset the mask does not reach solves as without one",
-				untouched[0].result.zncc > 0.f && untouched[0].deformation.u == without[0].deformation.u
-				&& untouched[0].deformation.v == without[0].deformation.v,
-				to_string(untouched[0].result.zncc) + " / " + to_string(without[0].result.zncc) + ", u "
-				+ to_string(untouched[0].deformation.u) + " / " + to_string(without[0].deformation.u));
 		};
+
 		ICLM2D1 iclm1(kRadius, kRadius, 0.001f, 20, 1);
-		refuses("ICLM2D1", iclm1);
-		ICLM2D2 iclm2(kRadius, kRadius, 0.001f, 20, 1);
-		refuses("ICLM2D2", iclm2);
+		suite("ICLM2D1", iclm1, true, 0.02f);
+		//unmasked, a subset over the hole wanders past 20 iterations on the affine field and
+		//is refused for it; given 200 it converges, wrong by about half a pixel, which is
+		//what the check that the fixture bites needs to see
+		ICLM2D2 iclm2(kRadius, kRadius, 0.001f, 200, 1);
+		suite("ICLM2D2", iclm2, true, 0.02f);
 		NR2D1 nr(kRadius, kRadius, 0.001f, 20, 1);
-		refuses("NR2D1", nr);
+		suite("NR2D1", nr, true, 0.02f);
 		SimplexMatch2D simplex(kRadius, kRadius, 1);
 		simplex.setIteration(2000, 1.0e-6f); //its default budget stops short on this fixture, mask or none
-		refuses("SimplexMatch2D", simplex);
+		suite("SimplexMatch2D", simplex, false, 0.02f);
 	}
 
 	//--- 8. statuses ---
@@ -668,7 +754,7 @@ int main()
 		icgn.prepare();
 		const Point2D near_point = besideTheHole()[0];
 		const Point2D far_point = farFromTheHole()[0];
-		vector<POI2D> solved = run(icgn, { near_point, far_point }, shift, &mask, false);
+		vector<POI2D> solved = run(icgn, { near_point, far_point }, shift, &mask);
 
 		Uncertainty2D uncertainty(kRadius, kRadius, 1);
 		uncertainty.setImages(ref, tar_shift);

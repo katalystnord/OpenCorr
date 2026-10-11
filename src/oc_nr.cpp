@@ -18,6 +18,12 @@
 
 namespace opencorr
 {
+	namespace
+	{
+		//how far Gradient2D4's stencil reaches from the pixel it differentiates (issue #19)
+		const int kGradientReach = 2;
+	}
+
 	std::unique_ptr<NR2D1_> NR2D1_::allocate(int subset_radius_x, int subset_radius_y)
 	{
 		int subset_width = 2 * subset_radius_x + 1;
@@ -178,21 +184,61 @@ namespace opencorr
 			return;
 		}
 
-		//issue #19: this solver does not honour a mask yet, so a subset the mask reaches is
-		//refused, saying why, rather than correlated over pixels the caller excluded
-		if (subsetIsMasked((int)poi->x, (int)poi->y, subset_radius_x, subset_radius_y))
-		{
-			poi->result.zncc = (float)STATUS_MASK_NOT_SUPPORTED;
-			return;
-		}
-
 		int subset_width = 2 * subset_radius_x + 1;
 		int subset_height = 2 * subset_radius_y + 1;
 
 		//set reference subset
 		fa_nr->ref_subset->center = (Point2D)*poi;
 		fa_nr->ref_subset->fill(ref_img);
-		float ref_mean_norm = fa_nr->ref_subset->zeroMeanNorm();
+		//issue #19: correlate only the pixels the mask keeps, where it reaches this subset.
+		//The weight belongs to the REFERENCE pixel: the target is sampled at that pixel's
+		//warped position, so the same weight takes the pair out of the norm, the residual
+		//and, through sd_img, the Hessian and every numerator
+		bool masked = false;
+		if (!weighSubset(*fa_nr->ref_subset, poi, masked))
+		{
+			return;
+		}
+		float ref_mean_norm = masked
+			? fa_nr->ref_subset->maskedZeroMeanNorm(fa_nr->ref_subset->weight, fa_nr->ref_subset->valid_count)
+			: fa_nr->ref_subset->zeroMeanNorm();
+
+		//The search direction is built from the TARGET's gradients, interpolated from a
+		//gradient image, and that reaches further than the intensity does: the gradient
+		//stencil reaches kGradientReach px and the B-spline over it as far again. A valid
+		//pixel whose gradient reaches masked ground would carry what shows through the hole
+		//into the Jacobian, and forward-additive NR stops where the Jacobian times the
+		//residual vanishes, so the answer would move with the background. Measured: 7e-5 px,
+		//unchanged by a tighter convergence criterion. Such pixels keep their place in the
+		//cost and leave the Jacobian.
+		Eigen::MatrixXf jacobian_weight;
+		if (masked)
+		{
+			jacobian_weight = fa_nr->ref_subset->weight;
+			for (int r = 0; r < subset_height; r++)
+			{
+				for (int c = 0; c < subset_width; c++)
+				{
+					if (jacobian_weight(r, c) == 0.f)
+					{
+						continue;
+					}
+					const int x_global = (int)poi->x + c - subset_radius_x;
+					const int y_global = (int)poi->y + r - subset_radius_y;
+					for (int dy = -kGradientReach; dy <= kGradientReach && jacobian_weight(r, c) > 0.f; dy++)
+					{
+						for (int dx = -kGradientReach; dx <= kGradientReach; dx++)
+						{
+							if (!valid_pixels->isValid(x_global + dx, y_global + dy))
+							{
+								jacobian_weight(r, c) = 0.f;
+								break;
+							}
+						}
+					}
+				}
+			}
+		}
 
 		//set target subset
 		fa_nr->tar_subset->center = (Point2D)*poi;
@@ -224,7 +270,21 @@ namespace opencorr
 					fa_nr->tar_gradient_y(r, c) = tar_interp_y->compute(global_coor);
 				}
 			}
-			float tar_mean_norm = fa_nr->tar_subset->zeroMeanNorm();
+			//a sample off the target is the interpolator's OUT_OF_BOUNDS sentinel; a masked
+			//pixel takes no part, so it may leave the image, and a valid one may not. The
+			//unmasked path is left as upstream has it.
+			if (masked)
+			{
+				const float out_of_bounds = BicubicBspline::OUT_OF_BOUNDS;
+				if (((fa_nr->tar_subset->eg_mat.array() == out_of_bounds) && (fa_nr->ref_subset->weight.array() > 0.f)).any())
+				{
+					poi->result.zncc = (float)STATUS_INVALID_SUBSET_OR_GUESS;
+					return;
+				}
+			}
+			float tar_mean_norm = masked
+				? fa_nr->tar_subset->maskedZeroMeanNorm(fa_nr->ref_subset->weight, fa_nr->ref_subset->valid_count)
+				: fa_nr->tar_subset->zeroMeanNorm();
 
 			//build the Hessian matrix
 			fa_nr->hessian.setZero();
@@ -236,6 +296,11 @@ namespace opencorr
 					int y_local = r - subset_radius_y;
 					float tar_grad_x = fa_nr->tar_gradient_x(r, c);
 					float tar_grad_y = fa_nr->tar_gradient_y(r, c);
+					if (masked)
+					{
+						tar_grad_x *= jacobian_weight(r, c);
+						tar_grad_y *= jacobian_weight(r, c);
+					}
 
 					fa_nr->sd_img[r][c][0] = tar_grad_x;
 					fa_nr->sd_img[r][c][1] = tar_grad_x * x_local;

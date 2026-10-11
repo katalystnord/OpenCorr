@@ -40,8 +40,8 @@ namespace opencorr
 	//region." That alone is already directly useful for masked POI-queue construction (see
 	//getOwnedPixels() below -- build a POI grid restricted to a hand-drawn ROI). A shape
 	//also reaches the correlation itself, since issue #19: a ValidPixelMask2D (oc_mask.h)
-	//built from one tells the ICGN solvers, FFTCC2D and Uncertainty2D which of a subset's
-	//pixels to correlate over.
+	//built from one tells the 2D subset solvers (ICGN, IC-LM, NR, Simplex), FFTCC2D and
+	//Uncertainty2D which of a subset's pixels to correlate over.
 	//
 	//Point-in-polygon test is DICe's own method (a signed winding-angle sum around the
 	//polygon's edges, not the more common ray-casting test) -- ported as-is rather than

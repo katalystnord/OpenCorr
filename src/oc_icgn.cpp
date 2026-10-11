@@ -135,33 +135,6 @@ namespace opencorr
 			inv_hessian = scale.asDiagonal() * lu.inverse() * scale.asDiagonal();
 			return true;
 		}
-
-		//Issue #19. Fills `ref_subset`'s weight from the solver's mask, at the subset's
-		//current centre, and says whether the mask reaches it at all. A subset it does not
-		//reach goes down the unmasked path untouched, so a mask changes nothing away from
-		//what it masks. Returns false, with the point stamped, when too small a share of
-		//the subset is valid to correlate.
-		bool weighSubset(const DIC& dic, Subset2D& ref_subset, POI2D* poi, bool& masked)
-		{
-			masked = false;
-			if (dic.valid_pixels == nullptr)
-			{
-				return true;
-			}
-			const int valid = ref_subset.fillWeight(*dic.valid_pixels);
-			if (valid == ref_subset.size)
-			{
-				return true;
-			}
-			//both sides in float, so a share sitting exactly on the floor is kept
-			if ((float)valid < dic.min_valid_share * (float)ref_subset.size)
-			{
-				poi->result.zncc = (float)STATUS_TOO_FEW_VALID_PIXELS;
-				return false;
-			}
-			masked = true;
-			return true;
-		}
 	}
 
 	std::unique_ptr<ICGN2D1_> ICGN2D1_::allocate(int subset_radius_x, int subset_radius_y)
@@ -321,7 +294,7 @@ namespace opencorr
 		icgn->ref_subset->fill(ref_img);
 		//issue #19: correlate only the pixels the mask keeps, where it reaches this subset
 		bool masked = false;
-		if (!weighSubset(*this, *icgn->ref_subset, poi, masked))
+		if (!weighSubset(*icgn->ref_subset, poi, masked))
 		{
 			return;
 		}
@@ -576,7 +549,7 @@ namespace opencorr
 		icgn->ref_subset->fill(ref_img);
 		//issue #19: correlate only the pixels the mask keeps, where it reaches this subset
 		bool masked = false;
-		if (!weighSubset(*this, *icgn->ref_subset, poi, masked))
+		if (!weighSubset(*icgn->ref_subset, poi, masked))
 		{
 			return;
 		}
@@ -941,7 +914,7 @@ namespace opencorr
 		icgn->ref_subset->fill(ref_img);
 		//issue #19: correlate only the pixels the mask keeps, where it reaches this subset
 		bool masked = false;
-		if (!weighSubset(*this, *icgn->ref_subset, poi, masked))
+		if (!weighSubset(*icgn->ref_subset, poi, masked))
 		{
 			return;
 		}
@@ -1202,7 +1175,7 @@ namespace opencorr
 		icgn->ref_subset->fill(ref_img);
 		//issue #19: correlate only the pixels the mask keeps, where it reaches this subset
 		bool masked = false;
-		if (!weighSubset(*this, *icgn->ref_subset, poi, masked))
+		if (!weighSubset(*icgn->ref_subset, poi, masked))
 		{
 			return;
 		}

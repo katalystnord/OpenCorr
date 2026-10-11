@@ -50,8 +50,8 @@ namespace opencorr
 		STATUS_RELIABILITY_GUIDED_REJECTED = -6, //quality or spatial jump-tolerance gate not met during RG-DIC propagation (ReliabilityGuided2D)
 		STATUS_SEQUENCE_JUMP_REJECTED = -7, //frame-to-frame (temporal) jump-tolerance gate not met (SequenceTracker2D)
 		STATUS_HESSIAN_SINGULAR = -8, //Hessian too ill-conditioned to invert reliably (ICGN only -- ICLM's Levenberg-Marquardt damping already handles this differently, see oc_iclm.cpp)
-		STATUS_TOO_FEW_VALID_PIXELS = -9, //too small a share of the subset is valid under the solver's ValidPixelMask2D (ICGN)
-		STATUS_MASK_NOT_SUPPORTED = -10, //the subset reaches masked pixels and this solver does not honour a mask yet (ICLM, NR, SimplexMatch2D)
+		STATUS_TOO_FEW_VALID_PIXELS = -9, //too small a share of the subset is valid under the solver's ValidPixelMask2D
+		STATUS_MASK_NOT_SUPPORTED = -10, //the subset reaches masked pixels and this solver does not honour a mask; no 2D solver returns it since ICLM, NR and SimplexMatch2D were masked, kept so the code keeps its meaning
 	};
 
 	//human-readable description of a StatusFlag code (or any non-negative ZNCC, described as success).
@@ -139,6 +139,13 @@ namespace opencorr
 
 		//true if a mask is set and the subset centred on (x, y) reaches an invalid pixel
 		bool subsetIsMasked(int x, int y, int radius_x, int radius_y) const;
+
+		//Fills `ref_subset`'s weight from the mask, at the subset's current centre, and says
+		//through `masked` whether the mask reaches it at all. A subset it does not reach goes
+		//down the solver's unmasked path untouched, so a mask changes nothing away from what
+		//it masks. Returns false, with the point stamped STATUS_TOO_FEW_VALID_PIXELS, when
+		//too small a share of the subset is valid to correlate. Shared by every 2D solver.
+		bool weighSubset(Subset2D& ref_subset, POI2D* poi, bool& masked) const;
 
 		virtual void prepare() = 0;
 		virtual void compute(POI2D* poi) = 0;

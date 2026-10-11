@@ -304,7 +304,7 @@ namespace opencorr
 		prepareTar();
 	}
 
-	float SimplexMatch2D::znssd(SimplexMatch2D_* instance, float ref_mean_norm, const std::vector<float>& p, int subset_rx, int subset_ry)
+	float SimplexMatch2D::znssd(SimplexMatch2D_* instance, float ref_mean_norm, const std::vector<float>& p, int subset_rx, int subset_ry, bool masked)
 	{
 		Deformation2D1 deformation(p[0], p[1], p[2], p[3], p[4], p[5]);
 
@@ -321,6 +321,13 @@ namespace opencorr
 				warped_coor = deformation.warp(local_coor);
 				global_coor = instance->tar_subset->center + warped_coor;
 				float sample = tar_interp->compute(global_coor);
+				if (masked && instance->ref_subset->weight(r, c) == 0.f)
+				{
+					//issue #19: a masked pixel takes no part, so it may leave the image; its
+					//value is zeroed by the masked mean below whatever it holds
+					instance->tar_subset->eg_mat(r, c) = 0.f;
+					continue;
+				}
 				//BicubicBspline::compute() returns exactly -1.f (not NaN, not an exception) for
 				//out-of-range coordinates -- a real pixel intensity is never negative, so this
 				//is an unambiguous, cheap way to detect it without duplicating its bounds test.
@@ -340,7 +347,9 @@ namespace opencorr
 			}
 		}
 
-		float tar_mean_norm = instance->tar_subset->zeroMeanNorm();
+		float tar_mean_norm = masked
+			? instance->tar_subset->maskedZeroMeanNorm(instance->ref_subset->weight, instance->ref_subset->valid_count)
+			: instance->tar_subset->zeroMeanNorm();
 		if (tar_mean_norm <= 0.f)
 		{
 			return 1e10f; //degenerate warped subset (e.g. warped outside the image): treat as a very poor match, not a NaN
@@ -378,17 +387,17 @@ namespace opencorr
 			return;
 		}
 
-		//issue #19: this solver does not honour a mask yet, so a subset the mask reaches is
-		//refused, saying why, rather than correlated over pixels the caller excluded
-		if (subsetIsMasked((int)poi->x, (int)poi->y, subset_rx, subset_ry))
-		{
-			poi->result.zncc = (float)STATUS_MASK_NOT_SUPPORTED;
-			return;
-		}
-
 		instance->ref_subset->center = (Point2D)*poi;
 		instance->ref_subset->fill(ref_img);
-		float ref_mean_norm = instance->ref_subset->zeroMeanNorm();
+		//issue #19: correlate only the pixels the mask keeps, where it reaches this subset
+		bool masked = false;
+		if (!weighSubset(*instance->ref_subset, poi, masked))
+		{
+			return;
+		}
+		float ref_mean_norm = masked
+			? instance->ref_subset->maskedZeroMeanNorm(instance->ref_subset->weight, instance->ref_subset->valid_count)
+			: instance->ref_subset->zeroMeanNorm();
 
 		if (ref_mean_norm <= 0.f)
 		{
@@ -407,7 +416,7 @@ namespace opencorr
 		int iterations_used = 0;
 		float znssd_final = 0.f;
 		bool converged = simplex.minimize(p, deltas,
-			[&](const std::vector<float>& variables) { return znssd(instance.get(), ref_mean_norm, variables, subset_rx, subset_ry); },
+			[&](const std::vector<float>& variables) { return znssd(instance.get(), ref_mean_norm, variables, subset_rx, subset_ry, masked); },
 			iterations_used, znssd_final); //final_cost is the winning vertex's already-computed cost -- no redundant re-evaluation needed
 
 		poi->deformation.u = p[0];

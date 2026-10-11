@@ -172,13 +172,6 @@ namespace opencorr
 			return;
 		}
 
-		//issue #19: this solver does not honour a mask yet, so a subset the mask reaches is
-		//refused, saying why, rather than correlated over pixels the caller excluded
-		if (subsetIsMasked((int)poi->x, (int)poi->y, subset_rx, subset_ry))
-		{
-			poi->result.zncc = (float)STATUS_MASK_NOT_SUPPORTED;
-			return;
-		}
 
 		//set subset dimension
 		int subset_width = 2 * subset_rx + 1;
@@ -187,7 +180,16 @@ namespace opencorr
 		//set reference subset
 		iclm->ref_subset->center = (Point2D)*poi;
 		iclm->ref_subset->fill(ref_img);
-		float ref_mean_norm = iclm->ref_subset->zeroMeanNorm();
+		//issue #19: correlate only the pixels the mask keeps, where it reaches this subset,
+		//exactly as ICGN does
+		bool masked = false;
+		if (!weighSubset(*iclm->ref_subset, poi, masked))
+		{
+			return;
+		}
+		float ref_mean_norm = masked
+			? iclm->ref_subset->maskedZeroMeanNorm(iclm->ref_subset->weight, iclm->ref_subset->valid_count)
+			: iclm->ref_subset->zeroMeanNorm();
 
 		//build the Hessian matrix
 		iclm->hessian.setZero();
@@ -201,6 +203,13 @@ namespace opencorr
 				int y_global = (int)poi->y + y_local;
 				float ref_gradient_x = ref_gradient->gradient_x(y_global, x_global);
 				float ref_gradient_y = ref_gradient->gradient_y(y_global, x_global);
+				if (masked)
+				{
+					//weighting the gradient takes a masked pixel out of the Hessian and,
+					//through sd_img, out of every numerator below
+					ref_gradient_x *= iclm->ref_subset->weight(r, c);
+					ref_gradient_y *= iclm->ref_subset->weight(r, c);
+				}
 
 				iclm->sd_img[r][c][0] = ref_gradient_x;
 				iclm->sd_img[r][c][1] = ref_gradient_x * x_local;
@@ -255,7 +264,22 @@ namespace opencorr
 				}
 			}
 
-			float tar_mean_norm = iclm->tar_subset->zeroMeanNorm();
+			//a sample off the target is the interpolator's OUT_OF_BOUNDS sentinel; a masked
+			//pixel takes no part, so it may leave the image, and a valid one may not. The
+			//unmasked path is left as upstream has it.
+			if (masked)
+			{
+				const float out_of_bounds = BicubicBspline::OUT_OF_BOUNDS;
+				if (((iclm->tar_subset->eg_mat.array() == out_of_bounds) && (iclm->ref_subset->weight.array() > 0.f)).any())
+				{
+					poi->result.zncc = (float)STATUS_INVALID_SUBSET_OR_GUESS;
+					return;
+				}
+			}
+
+			float tar_mean_norm = masked
+				? iclm->tar_subset->maskedZeroMeanNorm(iclm->ref_subset->weight, iclm->ref_subset->valid_count)
+				: iclm->tar_subset->zeroMeanNorm();
 
 			//calculate error image
 			iclm->error_img = iclm->tar_subset->eg_mat * (ref_mean_norm / tar_mean_norm) - (iclm->ref_subset->eg_mat);
@@ -532,20 +556,22 @@ namespace opencorr
 			return;
 		}
 
-		//issue #19: this solver does not honour a mask yet, so a subset the mask reaches is
-		//refused, saying why, rather than correlated over pixels the caller excluded
-		if (subsetIsMasked((int)poi->x, (int)poi->y, subset_rx, subset_ry))
-		{
-			poi->result.zncc = (float)STATUS_MASK_NOT_SUPPORTED;
-			return;
-		}
 		int subset_width = 2 * subset_rx + 1;
 		int subset_height = 2 * subset_ry + 1;
 
 		//set reference subset
 		iclm->ref_subset->center = (Point2D)*poi;
 		iclm->ref_subset->fill(ref_img);
-		float ref_mean_norm = iclm->ref_subset->zeroMeanNorm();
+		//issue #19: correlate only the pixels the mask keeps, where it reaches this subset,
+		//exactly as ICGN does
+		bool masked = false;
+		if (!weighSubset(*iclm->ref_subset, poi, masked))
+		{
+			return;
+		}
+		float ref_mean_norm = masked
+			? iclm->ref_subset->maskedZeroMeanNorm(iclm->ref_subset->weight, iclm->ref_subset->valid_count)
+			: iclm->ref_subset->zeroMeanNorm();
 
 		//build the Hessian matrix
 		iclm->hessian.setZero();
@@ -562,6 +588,13 @@ namespace opencorr
 				int y_global = (int)poi->y + y_local;
 				float ref_gradient_x = ref_gradient->gradient_x(y_global, x_global);
 				float ref_gradient_y = ref_gradient->gradient_y(y_global, x_global);
+				if (masked)
+				{
+					//weighting the gradient takes a masked pixel out of the Hessian and,
+					//through sd_img, out of every numerator below
+					ref_gradient_x *= iclm->ref_subset->weight(r, c);
+					ref_gradient_y *= iclm->ref_subset->weight(r, c);
+				}
 
 				iclm->sd_img[r][c][0] = ref_gradient_x;
 				iclm->sd_img[r][c][1] = ref_gradient_x * x_local;
@@ -621,7 +654,23 @@ namespace opencorr
 					iclm->tar_subset->eg_mat(r, c) = tar_interp->compute(global_coor);
 				}
 			}
-			float tar_mean_norm = iclm->tar_subset->zeroMeanNorm();
+
+			//a sample off the target is the interpolator's OUT_OF_BOUNDS sentinel; a masked
+			//pixel takes no part, so it may leave the image, and a valid one may not. The
+			//unmasked path is left as upstream has it.
+			if (masked)
+			{
+				const float out_of_bounds = BicubicBspline::OUT_OF_BOUNDS;
+				if (((iclm->tar_subset->eg_mat.array() == out_of_bounds) && (iclm->ref_subset->weight.array() > 0.f)).any())
+				{
+					poi->result.zncc = (float)STATUS_INVALID_SUBSET_OR_GUESS;
+					return;
+				}
+			}
+
+			float tar_mean_norm = masked
+				? iclm->tar_subset->maskedZeroMeanNorm(iclm->ref_subset->weight, iclm->ref_subset->valid_count)
+				: iclm->tar_subset->zeroMeanNorm();
 
 			//calculate error image
 			iclm->error_img = iclm->tar_subset->eg_mat * (ref_mean_norm / tar_mean_norm) - (iclm->ref_subset->eg_mat);
