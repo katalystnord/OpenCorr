@@ -91,12 +91,26 @@ namespace opencorr
 		//always-correct combined prepare() every frame.
 		SplittablePrepare2D* splittable = dynamic_cast<SplittablePrepare2D*>(&solver);
 
+		//each POI's fraction of a pixel off the whole pixel it is solved on -- see below
+		std::vector<float> fraction_x(n), fraction_y(n);
+
 		for (int k = 1; k < (int)images.size(); k++)
 		{
 			working.clear();
 			for (int i = 0; i < n; i++)
 			{
-				POI2D poi(Point2D(ref_x[i], ref_y[i]));
+				//solved on its NEAREST WHOLE PIXEL, not at ref_x/ref_y. The solvers read the
+				//reference subset at the truncated (int)poi.x and warp the target about the
+				//exact poi.x, so a POI handed in at 104.6 is measured as though it sat at 104
+				//and its increment comes back wrong by the 0.6 px between them, while
+				//correlating perfectly. After a re-anchor ref_x/ref_y almost always sit
+				//between pixels, so every later frame carried that error. The answer is
+				//carried back to ref_x/ref_y after the solve, below.
+				const float whole_x = std::round(ref_x[i]);
+				const float whole_y = std::round(ref_y[i]);
+				fraction_x[i] = ref_x[i] - whole_x;
+				fraction_y[i] = ref_y[i] - whole_y;
+				POI2D poi(Point2D(whole_x, whole_y));
 				poi.deformation.u = last_increment_u[i];
 				poi.deformation.v = last_increment_v[i];
 				poi.deformation.ux = last_ux[i];
@@ -117,6 +131,23 @@ namespace opencorr
 			}
 			last_prepared_ref_idx = ref_idx;
 			solver.compute(working);
+
+			//back from the whole pixel to where each POI actually is, by the subset's own
+			//displacement gradient -- exact for a movement affine across the subset, and the
+			//same correction ICGN2D1's centre-offset path makes internally. Every solver
+			//reports the gradient (zero for a translation-only one such as FFTCC2D, which
+			//then measures the whole pixel's movement, as it always did).
+			for (int i = 0; i < n; i++)
+			{
+				if (working[i].result.zncc < 0.f)
+				{
+					continue;
+				}
+				working[i].deformation.u += working[i].deformation.ux * fraction_x[i]
+					+ working[i].deformation.uy * fraction_y[i];
+				working[i].deformation.v += working[i].deformation.vx * fraction_x[i]
+					+ working[i].deformation.vy * fraction_y[i];
+			}
 
 			FrameStatus status;
 			status.reference_updated = false;

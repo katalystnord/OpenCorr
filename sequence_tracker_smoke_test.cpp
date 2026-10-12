@@ -13,7 +13,9 @@
  feature.
 */
 
+#include <cmath>
 #include <iostream>
+#include <random>
 
 #include "opencorr.h"
 
@@ -130,6 +132,85 @@ namespace
 			}
 			recorded_positions.push_back(positions);
 			call_count++;
+		}
+	};
+
+	//An analytic speckle, as masked_subset_smoke_test.cpp renders it: one Gaussian dot
+	//per 6 px cell, jittered. Rendered rather than loaded so the answer is exact by
+	//construction -- every frame is drawn afresh, nothing is resampled.
+	struct Speckle
+	{
+		int cells_x, cells_y;
+		vector<float> dot_x, dot_y;
+		static constexpr float cell = 6.f, radius = 2.2f;
+
+		Speckle(int width, int height, unsigned seed)
+		{
+			cells_x = (int)(width / cell) + 8;
+			cells_y = (int)(height / cell) + 8;
+			mt19937 rng(seed);
+			uniform_real_distribution<float> jitter(0.f, cell);
+			for (int j = 0; j < cells_y; j++)
+			{
+				for (int i = 0; i < cells_x; i++)
+				{
+					dot_x.push_back((i - 4) * cell + jitter(rng));
+					dot_y.push_back((j - 4) * cell + jitter(rng));
+				}
+			}
+		}
+
+		float at(float x, float y) const
+		{
+			const int ci = (int)floor(x / cell) + 4;
+			const int cj = (int)floor(y / cell) + 4;
+			float sum = 0.f;
+			for (int j = cj - 3; j <= cj + 3; j++)
+			{
+				for (int i = ci - 3; i <= ci + 3; i++)
+				{
+					if (i < 0 || j < 0 || i >= cells_x || j >= cells_y)
+					{
+						continue;
+					}
+					const float dx = x - dot_x[j * cells_x + i];
+					const float dy = y - dot_y[j * cells_x + i];
+					sum += exp(-(dx * dx + dy * dy) / (radius * radius));
+				}
+			}
+			return 20.f + 180.f * sum;
+		}
+	};
+
+	//x = c + F (X - c) + t, X the material position in frame 0 and c the image centre.
+	//Lopsided in every term, so no component of the answer can agree with itself.
+	struct Motion
+	{
+		float f11, f12, f21, f22, tx, ty;
+		float cx, cy;
+
+		Point2D displacement(float X, float Y) const
+		{
+			const float dX = X - cx, dY = Y - cy;
+			return Point2D(cx + f11 * dX + f12 * dY + tx - X, cy + f21 * dX + f22 * dY + ty - Y);
+		}
+
+		Image2D render(const Speckle& speckle, int width, int height) const
+		{
+			const float det = f11 * f22 - f12 * f21;
+			Image2D image(width, height);
+			for (int y = 0; y < height; y++)
+			{
+				for (int x = 0; x < width; x++)
+				{
+					//the material point now at (x, y): X = c + F^-1 (x - c - t)
+					const float px = x - cx - tx, py = y - cy - ty;
+					const float X = cx + (f22 * px - f12 * py) / det;
+					const float Y = cy + (-f21 * px + f11 * py) / det;
+					image.eg_mat(y, x) = speckle.at(X, Y);
+				}
+			}
+			return image;
 		}
 	};
 }
@@ -355,6 +436,97 @@ int main()
 			<< ": a POI that fails on the exact reference-update frame is still re-anchored "
 			<< "using its last known displacement, not left in the old reference's stale coordinates" << endl;
 		if (!(update_triggered && position_ok)) failures++;
+	}
+
+	//--- a followed point is measured where it is, not at its truncated position ---
+	//After a re-anchor every followed point sits between pixels. The engine's solvers read
+	//the reference subset at (int)poi.x and warp the target about the exact poi.x, so a
+	//point handed in at 104.6 is solved as though it sat at 104 and its increment is wrong
+	//by the 0.6 px between them -- while correlating perfectly. Found in SurView, which
+	//orchestrates its own sequences and fixed it there (2026-10-11); this is the same flaw
+	//in the fork's own tracker.
+	//
+	//Three frames under an affine motion with a fractional translation, measured twice: with
+	//a fixed reference, which is the control (and shows the fixture is sound), and with a
+	//re-anchor forced on frame 1 by a threshold no correlation can reach, so frame 2 is
+	//solved from followed, fractional positions. Both must land on the stated answer.
+	//
+	//Negative-checked, mean error after the re-anchor: 0.748 px with the tracker unfixed;
+	//0.0080 px solving on the whole pixel WITHOUT carrying the answer back by the subset's
+	//gradient; 0.0017 px fixed; 0.0009 px for the fixed-reference control. The gradients
+	//are steep (3 per cent per frame, with shear) and the grid kept near the centre so ICGN
+	//still captures it: at a gentler 0.4 per cent the carry-back made no measurable
+	//difference and dropping it left this case green.
+	cout << endl << "=== A followed point is measured at its position, not its truncated one ===" << endl;
+	{
+		const int width = 240, height = 200, radius = 16;
+		const Speckle speckle(width, height, 7);
+		const float cx = width / 2.f, cy = height / 2.f;
+		const Motion still = { 1.f, 0.f, 0.f, 1.f, 0.f, 0.f, cx, cy };
+		const Motion frame1 = { 1.03f, 0.012f, 0.008f, 0.975f, 0.61f, -0.33f, cx, cy };
+		const Motion frame2 = { 1.06f, 0.025f, 0.017f, 0.95f, 1.17f, -0.71f, cx, cy };
+		vector<Image2D> frames = { still.render(speckle, width, height),
+			frame1.render(speckle, width, height), frame2.render(speckle, width, height) };
+
+		auto grid = [&]()
+		{
+			vector<POI2D> pois;
+			for (int y = (int)cy - 30; y <= (int)cy + 30; y += 6)
+				for (int x = (int)cx - 30; x <= (int)cx + 30; x += 6)
+					pois.push_back(POI2D(Point2D((float)x, (float)y)));
+			return pois;
+		};
+
+		//mean error against the stated answer, over the points that solved
+		auto meanError = [&](const vector<POI2D>& pois, int& solved)
+		{
+			double sum = 0.;
+			solved = 0;
+			for (const POI2D& poi : pois)
+			{
+				if (poi.result.zncc < 0.9f) continue;
+				const Point2D truth = frame2.displacement(poi.x, poi.y);
+				sum += hypot(poi.deformation.u - truth.x, poi.deformation.v - truth.y);
+				solved++;
+			}
+			return solved > 0 ? (float)(sum / solved) : 1e9f;
+		};
+
+		auto track = [&](bool re_anchor, vector<POI2D>& pois)
+		{
+			ICGN2D1 icgn(radius, radius, 0.001f, 20, thread_number);
+			SequenceTracker2D tracker;
+			tracker.setReferenceUpdateEnabled(re_anchor);
+			tracker.setUpdateZnccThreshold(1.01f); //unreachable: re-anchor on every frame
+			tracker.setUpdatePercentile(0.75f);
+			return tracker.compute(frames, pois, icgn);
+		};
+
+		vector<POI2D> fixed_pois = grid();
+		track(false, fixed_pois);
+		int fixed_solved = 0;
+		const float fixed_error = meanError(fixed_pois, fixed_solved);
+
+		vector<POI2D> anchored_pois = grid();
+		auto status = track(true, anchored_pois);
+		int anchored_solved = 0;
+		const float anchored_error = meanError(anchored_pois, anchored_solved);
+
+		const int n_points = (int)fixed_pois.size();
+		cout << "  fixed reference:    " << fixed_solved << "/" << n_points
+			<< " solved, mean error " << fixed_error << " px" << endl;
+		cout << "  re-anchored frame 1: " << anchored_solved << "/" << n_points
+			<< " solved, mean error " << anchored_error << " px" << endl;
+
+		const bool control_ok = fixed_solved == n_points && fixed_error < 0.004f;
+		const bool anchored_ok = status[0].reference_updated && anchored_solved == n_points
+			&& anchored_error < 0.004f;
+		cout << "  " << (control_ok ? "PASS" : "FAIL")
+			<< ": the fixture is sound -- a fixed reference measures the stated answer" << endl;
+		cout << "  " << (anchored_ok ? "PASS" : "FAIL")
+			<< ": after a re-anchor, followed points still measure the stated answer" << endl;
+		if (!control_ok) failures++;
+		if (!anchored_ok) failures++;
 	}
 
 	cout << endl << (failures == 0 ? "ALL CHECKS PASSED" : "SOME CHECKS FAILED") << " (" << failures << " failure(s))" << endl;
