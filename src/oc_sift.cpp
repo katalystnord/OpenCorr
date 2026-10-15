@@ -93,13 +93,21 @@ namespace opencorr
 			}
 		}
 
+		//clear the queues of matched keypoints
+		clear();
+
+		//an image with no features (a blank frame, or an Image2D whose cv_mat was never
+		//filled) leaves a descriptor set empty, and FLANN throws on building an index over
+		//nothing: no features is no matches, not an abort
+		if (ref_descriptor.empty() || tar_descriptor.empty()) return;
+
 		//match the keypoints in the reference image with those in the target image
 		cv::FlannBasedMatcher matcher;
 		std::vector<std::vector<cv::DMatch>> matches;
 		matcher.knnMatch(ref_descriptor, tar_descriptor, matches, 2);
 
-		//clear the queues of matched keypoints
-		clear();
+		//the ratio test needs two neighbours, and a target with one feature returns one;
+		//matches[i] stays aligned with ref_kp[i], so such an entry is skipped, not erased
 
 		//check if the matching ratio is satisfied, then assign the matched keypoints to the queues
 		size_t matches_size = matches.size();
@@ -109,7 +117,7 @@ namespace opencorr
 			{
 				for (int i = 0; i < matches_size; i++)
 				{
-					if (matches[i][0].distance < matching_ratio * matches[i][1].distance)
+					if (matches[i].size() == 2 && matches[i][0].distance < matching_ratio * matches[i][1].distance)
 					{
 						Point2D ref_candidate(ref_kp[i].pt.x, ref_kp[i].pt.y);
 						ref_matched_kp.push_back(ref_candidate);
@@ -120,7 +128,7 @@ namespace opencorr
 			{
 				for (int j = 0; j < matches_size; j++)
 				{
-					if (matches[j][0].distance < matching_ratio * matches[j][1].distance)
+					if (matches[j].size() == 2 && matches[j][0].distance < matching_ratio * matches[j][1].distance)
 					{
 						Point2D tar_candidate(tar_kp[matches[j][0].trainIdx].pt.x, tar_kp[matches[j][0].trainIdx].pt.y);
 						tar_matched_kp.push_back(tar_candidate);

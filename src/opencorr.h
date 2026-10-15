@@ -44,6 +44,7 @@
 #include "oc_region_fit.h"
 #include "oc_reliability_guided.h"
 #include "oc_sequence_tracker.h"
+#include "oc_session_alignment.h"
 #include "oc_shape.h"
 #include "oc_sift.h"
 #include "oc_simplex.h"
