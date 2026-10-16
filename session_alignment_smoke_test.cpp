@@ -34,6 +34,12 @@
     specimen either way.
  7. The same, with the specimen slid 9 px: beyond what the refinement reaches
     from a bad starting fit, so the ground must already choose the SIFT matches.
+ 8. No ground, fitted on the specimen, with a KNOWN LENGTH between two rig
+    points: the scale is taken from it, so the specimen's uniform dilatation is
+    measured. The same fit without it loses the dilatation from both normal
+    terms, which is what lets the case tell the two apart.
+ 9. A known length with an end too near the edge is refused.
+10. A known length with an end covered on the target is refused.
 
  Measured: ground fit 0.0012 px worst over the image (RANSAC alone 0.033 px);
  specimen displacement carried back within 0.0011 px on average.
@@ -53,6 +59,16 @@
    The rejection removes the subsets that straddle onto the specimen (267 of 321
    kept). The whole-subset rule stays, so the fit does not depend on that.
  - SIFT2D's empty-descriptor guard removed: case 4 aborts in FLANN.
+
+ The known length (2026-10-16), each run and reverted:
+ - The fixed scale ignored by the fit, or the ratio of the lengths inverted, or
+   the final rounds fitted freely: case 8 red on the scale and the strains.
+ - The correlation of an end not checked: case 10 red.
+ - The bounds of an end not checked: NOT caught. ICGN refuses a subset outside
+   the image itself, so case 9 is refused either way; the check stays so that
+   nothing is read past an image edge to find out.
+ - The first fit at the known scale, before the reweighting, removed: NOT
+   caught. The rounds that follow reach the same fit from the free one.
 */
 
 #include <cmath>
@@ -402,6 +418,112 @@ int main()
 		DISC = 60.f;
 		D0X = 1.3;
 		D0Y = -0.7;
+	}
+
+	// 8. no ground, fitted on the specimen, with a KNOWN LENGTH: two points on the rig
+	//    whose distance did not change. The camera's scale is taken from them, so the
+	//    fit on the specimen absorbs only its rigid motion and its uniform dilatation is
+	//    measured. Without the length the same fit loses (E11 + E22) / 2 from both
+	//    normal terms, which is what makes this case able to tell the two apart.
+	{
+		OrderedRegion2D disc;
+		disc.add(make_unique<Ellipse2D>(CX, CY, DISC - 12, DISC - 12));
+
+		auto specimenGradient = [&](const AlignmentResult& r, double out[4]) {
+			ICGN2D1 icgn(16, 16, 0.001f, 20, 4);
+			icgn.setImages(ref, tar);
+			icgn.prepare();
+			vector<POI2D> pois;
+			for (int y = (int)CY - 36; y <= (int)CY + 36; y += 6)
+				for (int x = (int)CX - 36; x <= (int)CX + 36; x += 6)
+				{
+					if ((x - CX) * (x - CX) + (y - CY) * (y - CY) > 40 * 40) continue;
+					POI2D poi(Point2D((float)x, (float)y));
+					r.transform.seed(poi);
+					pois.push_back(poi);
+				}
+			icgn.compute(pois);
+			int solved = 0;
+			for (int k = 0; k < 4; k++) out[k] = 0;
+			for (auto& poi : pois)
+			{
+				if (poi.result.zncc < 0.9f) continue;
+				r.transform.toReference(poi);
+				out[0] += poi.deformation.ux;
+				out[1] += poi.deformation.uy;
+				out[2] += poi.deformation.vx;
+				out[3] += poi.deformation.vy;
+				solved++;
+			}
+			for (int k = 0; k < 4; k++) out[k] /= max(solved, 1);
+			return solved;
+		};
+
+		SessionAlignment2D plain(15, 6, 4);
+		plain.setImages(ref, tar);
+		plain.setGround(&disc);
+		const AlignmentResult p = plain.compute();
+
+		SessionAlignment2D known(15, 6, 4);
+		known.setImages(ref, tar);
+		known.setGround(&disc);
+		known.setKnownLength(Point2D(22, 24), Point2D(214, 178));
+		const AlignmentResult k = known.compute();
+
+		double gp[4], gk[4];
+		const int np = specimenGradient(p, gp), nk = specimenGradient(k, gk);
+		printf("specimen fit, no length:   scale %.6f, %d points, gradient %+.5f %+.5f %+.5f %+.5f\n",
+			p.transform.scale, np, gp[0], gp[1], gp[2], gp[3]);
+		printf("specimen fit, known length: scale %.6f, %d points, gradient %+.5f %+.5f %+.5f %+.5f\n",
+			k.transform.scale, nk, gk[0], gk[1], gk[2], gk[3]);
+		printf("                            ends found at (%.3f, %.3f) and (%.3f, %.3f), zncc %.4f %.4f\n",
+			k.known_length_target[0].x, k.known_length_target[0].y, k.known_length_target[1].x,
+			k.known_length_target[1].y, k.known_length_zncc[0], k.known_length_zncc[1]);
+		const Point2D ta = truth.map(22, 24), tb = truth.map(214, 178);
+		check(k.status == AlignmentStatus::ok && k.known_length_used, "the known length is measured and used");
+		check(hypot(k.known_length_target[0].x - ta.x, k.known_length_target[0].y - ta.y) < 0.01
+			&& hypot(k.known_length_target[1].x - tb.x, k.known_length_target[1].y - tb.y) < 0.01,
+			"each end of the known length is found on the target within 0.01 px");
+		check(fabs(k.transform.scale - SCALE) < 1e-4, "the camera scale is taken from the known length");
+		check(!p.known_length_used && fabs(gp[0] - E11) > 2e-3 && fabs(gp[3] - E22) > 2e-3,
+			"without the length, the specimen fit loses the dilatation from both normal terms");
+		//the rotation is still the fit's: only the symmetric part is the specimen's
+		check(nk > 0 && fabs(gk[0] - E11) < 3e-4 && fabs(gk[3] - E22) < 3e-4
+			&& fabs((gk[1] + gk[2]) - (E12 + E21)) < 3e-4,
+			"with it, both normal strains and the shear are measured in full");
+	}
+
+	// 9. a known length whose end cannot be measured is refused, never quietly ignored
+	{
+		SessionAlignment2D edge(15, 10, 4);
+		edge.setImages(ref, tar);
+		edge.setGround(&ground);
+		edge.setKnownLength(Point2D(3, 3), Point2D(214, 178));
+		const AlignmentResult r = edge.compute();
+		check(r.status == AlignmentStatus::known_length_unmeasured && !r.known_length_used,
+			"a known length with an end too near the edge to correlate is refused");
+	}
+
+	// 10. an end inside both images that does not correlate: the target is covered
+	//     where it lands, as by a hand or a cable, so only the correlation can refuse it
+	{
+		Image2D covered = render(tar_w, tar_h, &truth, true, specimen, rig);
+		const Point2D tb = truth.map(214, 178);
+		for (int y = (int)tb.y - 20; y <= (int)tb.y + 20; y++)
+			for (int x = (int)tb.x - 20; x <= (int)tb.x + 20; x++)
+			{
+				if (x < 0 || y < 0 || x >= tar_w || y >= tar_h) continue;
+				covered.eg_mat(y, x) = 128.f + 40.f * (float)((x / 7 + y / 5) % 2);
+				covered.cv_mat.at<uchar>(y, x) = (uchar)covered.eg_mat(y, x);
+			}
+		SessionAlignment2D hidden(15, 10, 4);
+		hidden.setImages(ref, covered);
+		hidden.setGround(&ground);
+		hidden.setKnownLength(Point2D(22, 24), Point2D(214, 178));
+		const AlignmentResult r = hidden.compute();
+		printf("covered end: zncc %.4f %.4f\n", r.known_length_zncc[0], r.known_length_zncc[1]);
+		check(r.status == AlignmentStatus::known_length_unmeasured && !r.known_length_used,
+			"a known length with an end covered on the target is refused");
 	}
 
 	printf("%s: %d failure(s)\n", failures ? "FAILED" : "PASSED", failures);

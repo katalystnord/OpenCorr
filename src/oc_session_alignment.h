@@ -77,6 +77,7 @@ namespace opencorr
 		no_images, //compute() called before setImages()
 		too_few_matches, //fewer than min_matches SIFT matches on the ground, or RANSAC found no consensus
 		too_few_ground_points, //fewer than min_refined ground subsets converged and agreed
+		known_length_unmeasured, //an end of the known length did not correlate on the target
 	};
 
 	struct AlignmentResult
@@ -89,6 +90,12 @@ namespace opencorr
 		int refined_points = 0; //ground subsets attempted in the refinement
 		int refined_used = 0; //of those, converged and kept by the final fit
 		float residual_rms = 0.f; //px in the target, of the kept points about the final fit
+
+		//the known length, when one was given: where each end was found on the target,
+		//how well it correlated, and whether the scale was taken from it
+		bool known_length_used = false;
+		Point2D known_length_target[2];
+		float known_length_zncc[2] = { 0.f, 0.f };
 	};
 
 	class SessionAlignment2D
@@ -102,6 +109,15 @@ namespace opencorr
 
 		void setMinimums(int min_matches, int min_refined);
 
+		//two reference points whose distance did not change between the sessions: the
+		//ends of a scale bar, two fiducials. Each is correlated on the target, and the
+		//camera's scale is TAKEN from the ratio of the two lengths rather than fitted, so
+		//a fit on the specimen absorbs only its rigid motion and its uniform dilatation
+		//is measured. Rounded to whole pixels, since a subset is read at a whole pixel.
+		//An end that does not correlate refuses the alignment (known_length_unmeasured).
+		void setKnownLength(const Point2D& a, const Point2D& b);
+		void clearKnownLength();
+
 		AlignmentResult compute();
 
 	private:
@@ -113,6 +129,8 @@ namespace opencorr
 		int thread_number;
 		int min_matches = 8;
 		int min_refined = 6;
+		bool has_known_length = false;
+		Point2D known_length[2];
 	};
 
 }//namespace opencorr

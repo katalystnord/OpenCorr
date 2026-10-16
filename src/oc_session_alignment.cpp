@@ -87,12 +87,23 @@ namespace opencorr
 		this->min_refined = min_refined;
 	}
 
+	void SessionAlignment2D::setKnownLength(const Point2D& a, const Point2D& b)
+	{
+		known_length[0] = Point2D((float)std::lround(a.x), (float)std::lround(a.y));
+		known_length[1] = Point2D((float)std::lround(b.x), (float)std::lround(b.y));
+		has_known_length = true;
+	}
+
+	void SessionAlignment2D::clearKnownLength() { has_known_length = false; }
+
 	namespace
 	{
 		//least-squares similarity through point pairs: x = a X - b Y + tx, y = b X + a Y + ty,
 		//about the centroid so the normal equations stay well conditioned
+		//fixed_scale above zero holds the scale at that value and fits only the rotation
+		//and the shift, which is the least-squares rotation of the centred pairs
 		bool fitSimilarity(const std::vector<Point2D>& from, const std::vector<Point2D>& to,
-			const std::vector<char>& keep, Similarity2D& out)
+			const std::vector<char>& keep, Similarity2D& out, double fixed_scale = 0.0)
 		{
 			double fx = 0, fy = 0, tx = 0, ty = 0;
 			int n = 0;
@@ -115,7 +126,13 @@ namespace opencorr
 				cross += X * y - Y * x;
 			}
 			if (sxx <= 0) return false;
-			const double a = dot / sxx, b = cross / sxx;
+			double a = dot / sxx, b = cross / sxx;
+			if (fixed_scale > 0)
+			{
+				const double turn = std::atan2(cross, dot);
+				a = fixed_scale * std::cos(turn);
+				b = fixed_scale * std::sin(turn);
+			}
 			out.scale = std::hypot(a, b);
 			out.angle = std::atan2(b, a);
 			out.tx = tx - (a * fx - b * fy);
@@ -167,8 +184,49 @@ namespace opencorr
 		coarse.tx = h.at<double>(0, 2);
 		coarse.ty = h.at<double>(1, 2);
 
-		//3. refinement on a grid of subsets lying wholly on the ground
 		const int r = subset_radius, side = 2 * r + 1;
+		ICGN2D1 icgn(r, r, 0.001f, 20, thread_number);
+		icgn.setImages(*ref_img, *tar_img);
+		icgn.prepare();
+
+		auto fitsBoth = [&](const POI2D& poi) {
+			const Point2D t(poi.x + poi.deformation.u, poi.y + poi.deformation.v);
+			return poi.x >= r + 1 && poi.y >= r + 1 && poi.x <= ref_img->width - r - 2
+				&& poi.y <= ref_img->height - r - 2 && t.x >= r + 1 && t.y >= r + 1
+				&& t.x <= tar_img->width - r - 2 && t.y <= tar_img->height - r - 2;
+		};
+
+		//the known length: both ends correlated on the target, and the scale taken from them
+		double fixed_scale = 0.0;
+		if (has_known_length)
+		{
+			result.status = AlignmentStatus::known_length_unmeasured;
+			std::vector<POI2D> ends;
+			for (const Point2D& end : known_length)
+			{
+				POI2D poi(end);
+				coarse.seed(poi);
+				if (!fitsBoth(poi)) return result;
+				ends.push_back(poi);
+			}
+			icgn.compute(ends);
+			for (int i = 0; i < 2; i++)
+			{
+				const POI2D& poi = ends[i];
+				result.known_length_zncc[i] = poi.result.zncc;
+				if (!(poi.result.zncc >= 0.9f) || !std::isfinite(poi.deformation.u) || !std::isfinite(poi.deformation.v))
+					return result;
+				result.known_length_target[i] = Point2D(poi.x + poi.deformation.u, poi.y + poi.deformation.v);
+			}
+			const double before = std::hypot(known_length[1].x - known_length[0].x, known_length[1].y - known_length[0].y);
+			const double after = std::hypot(result.known_length_target[1].x - result.known_length_target[0].x,
+				result.known_length_target[1].y - result.known_length_target[0].y);
+			if (!(before > 0) || !(after > 0)) return result;
+			fixed_scale = after / before;
+			result.known_length_used = true;
+		}
+
+		//3. refinement on a grid of subsets lying wholly on the ground
 		std::unique_ptr<ValidPixelMask2D> on_ground;
 		if (ground) on_ground = std::make_unique<ValidPixelMask2D>(*ground, ref_img->width, ref_img->height, 0);
 
@@ -188,9 +246,6 @@ namespace opencorr
 		result.status = AlignmentStatus::too_few_ground_points;
 		if (result.refined_points < min_refined) return result;
 
-		ICGN2D1 icgn(r, r, 0.001f, 20, thread_number);
-		icgn.setImages(*ref_img, *tar_img);
-		icgn.prepare();
 		icgn.compute(queue);
 
 		std::vector<Point2D> centre, found;
@@ -207,6 +262,7 @@ namespace opencorr
 		//floor of 0.02 px so a perfect fit does not start rejecting its own noise.
 		Similarity2D fine = coarse;
 		std::vector<char> keep(centre.size(), 1);
+		if (fixed_scale > 0 && !fitSimilarity(centre, found, keep, fine, fixed_scale)) return result;
 		for (int round = 0; round < 20; round++)
 		{
 			std::vector<double> res(centre.size());
@@ -222,7 +278,7 @@ namespace opencorr
 			const bool settled = round > 0 && next == keep;
 			keep = next;
 			if (settled) break;
-			if (!fitSimilarity(centre, found, keep, fine)) return result;
+			if (!fitSimilarity(centre, found, keep, fine, fixed_scale)) return result;
 		}
 
 		double ss = 0;
