@@ -45,6 +45,22 @@
     correlation, its offset from the fit and whether the fit kept it, so a
     caller can say where ground moved. The specimen's subsets are rejected 1.26
     px or more from the fit, the kept ones sit within 0.003 px.
+12. Homography2D's arithmetic by hand: map, unmap, the Jacobian, and a point
+    that moved only with the camera carrying back to no movement.
+13. The camera TILTED between sessions (perspective terms giving about 5 %
+    scale change across the picture). Asked for perspective, the fit places
+    every reference pixel within 0.002 px and the specimen reads its own E;
+    the similarity cannot (16.9 px). Unasked, the perspective CHECK fitted
+    through the same subsets departs from the similarity by pixels, so a caller
+    can tell a tilt from one run.
+14. On the untilted pair the check agrees with the similarity within 0.0014 px.
+
+ ⚑ Under a tilt the camera's own warp across one subset curves. First-order
+ subsets find their centres a little off in a pattern that varies over the
+ picture: the perspective fit was 0.021 px worst with them, 0.0017 px with
+ second-order ones, which the refinement now uses. The specimen MEASURED with
+ first-order subsets through a correct fit is 0.023 px off on average for the
+ same reason, 0.0023 px with second-order ones; that is the caller's to say.
 
  Measured: ground fit 0.0012 px worst over the image (RANSAC alone 0.033 px);
  specimen displacement carried back within 0.0011 px on average.
@@ -86,6 +102,23 @@
  - The offset measured from the RANSAC fit, not the final one: case 11 red,
    and case 1.
  - A subset that did not correlate given an offset of zero: case 11 red.
+
+ Perspective (2026-10-17), each run and reverted:
+ - toReference taking the Jacobian at the reference point, not where the
+   material point now sits: case 13 red on the gradient.
+ - toReference not inverting the Jacobian: cases 12 and 13 red.
+ - The Jacobian without its perspective terms, or with a sign flipped: 12, 13.
+ - unmap with the adjugate transposed: 12 and 13 red, four checks.
+ - The refinement with first-order subsets: case 13 red (0.021 px).
+ - The perspective flag not reported, or the check not fitted unasked: 13, 14.
+ - The residual reported from the similarity when perspective was asked: 13.
+ - The refinement seeded from the similarity instead of the RANSAC homography:
+   case 13 red, subsets at the edges no longer converge (counts fall short).
+ - The homography fit not reweighted: case 11 red, the check pulled 1.3 px
+   toward the ground that moved.
+ - Gauss-Newton cut to one iteration: NOT caught. In normalised coordinates
+   the fit is nearly linear and one step from a similarity start lands within
+   the tolerances here; the iterations stay for stronger tilts.
 */
 
 #include <cmath>
@@ -183,10 +216,32 @@ namespace
 		}
 	};
 
+	//a camera TILTED against the reference: x = H W, with perspective terms, so the
+	//target's scale varies across the picture. Its own arithmetic, as Camera has.
+	struct TiltedCamera
+	{
+		double h[9];
+		Point2D map(double X, double Y) const
+		{
+			const double w = h[6] * X + h[7] * Y + h[8];
+			return Point2D((float)((h[0] * X + h[1] * Y + h[2]) / w), (float)((h[3] * X + h[4] * Y + h[5]) / w));
+		}
+		Point2D unmap(double x, double y) const
+		{
+			//the adjugate of h: the inverse up to a scale the division removes
+			const double a = h[4] * h[8] - h[5] * h[7], b = h[2] * h[7] - h[1] * h[8], c = h[1] * h[5] - h[2] * h[4];
+			const double d = h[5] * h[6] - h[3] * h[8], e = h[0] * h[8] - h[2] * h[6], f = h[2] * h[3] - h[0] * h[5];
+			const double g = h[3] * h[7] - h[4] * h[6], k = h[1] * h[6] - h[0] * h[7], l = h[0] * h[4] - h[1] * h[3];
+			const double w = g * x + k * y + l;
+			return Point2D((float)((a * x + b * y + c) / w), (float)((d * x + e * y + f) / w));
+		}
+	};
+
 	bool inDisc(double X, double Y) { return (X - CX) * (X - CX) + (Y - CY) * (Y - CY) <= DISC * DISC; }
 
 	//camera is null for the reference, which sees the world directly
-	Image2D render(int w, int h, const Camera* camera, bool deformed, const Speckle& specimen, const Speckle& rig)
+	Image2D render(int w, int h, const Camera* camera, bool deformed, const Speckle& specimen, const Speckle& rig,
+		const TiltedCamera* tilted = nullptr)
 	{
 		Image2D img(w, h);
 		const int ss = 3;
@@ -198,7 +253,7 @@ namespace
 					for (int sx = 0; sx < ss; sx++)
 					{
 						const Point2D p(x + (sx + 0.5f) / ss - 0.5f, y + (sy + 0.5f) / ss - 0.5f);
-						const Point2D W = camera ? camera->unmap(p.x, p.y) : p;
+						const Point2D W = tilted ? tilted->unmap(p.x, p.y) : camera ? camera->unmap(p.x, p.y) : p;
 						const Point2D X = deformed ? undeform(W.x, W.y) : W;
 						acc += inDisc(X.x, X.y) ? specimen.at(X.x, X.y) : rig.at(W.x, W.y);
 					}
@@ -211,6 +266,33 @@ namespace
 	//the largest distance between where the fitted and the true transform put a
 	//reference pixel, over the whole reference image
 	double worstMapping(const Similarity2D& fitted, const Camera& truth, int w, int h)
+	{
+		double worst = 0;
+		for (int y = 0; y < h; y += 4)
+			for (int x = 0; x < w; x += 4)
+			{
+				const Point2D a = fitted.map(Point2D((float)x, (float)y));
+				const Point2D b = truth.map(x, y);
+				worst = max(worst, (double)hypot(a.x - b.x, a.y - b.y));
+			}
+		return worst;
+	}
+
+	template <class A, class B>
+	double worstAgainst(const A& a, const B& b, int w, int h)
+	{
+		double worst = 0;
+		for (int y = 0; y < h; y += 4)
+			for (int x = 0; x < w; x += 4)
+			{
+				const Point2D p = a.map(Point2D((float)x, (float)y)), q = b.map(Point2D((float)x, (float)y));
+				worst = max(worst, (double)hypot(p.x - q.x, p.y - q.y));
+			}
+		return worst;
+	}
+
+	template <class Fitted>
+	double worstAgainstTilted(const Fitted& fitted, const TiltedCamera& truth, int w, int h)
 	{
 		double worst = 0;
 		for (int y = 0; y < h; y += 4)
@@ -621,6 +703,141 @@ int main()
 			"a subset that did not correlate is reported unkept, with no offset");
 		check(rejected_off_box == 0, "no subset on the real ground is reported as having moved by more than 0.1 px");
 		check(sized && worst_kept_residual < 0.02f, "a kept subset's offset is reported as the fit's own small residual");
+		const double check_apart = worstAgainst(r.projective, r.transform, ref_w, ref_h);
+		printf("ground partly on the specimen: the perspective check departs %.4f px from the similarity\n", check_apart);
+		check(r.projective_fitted && check_apart < 0.01,
+			"the perspective check leaves out the ground that moved too, and agrees with the similarity");
+	}
+
+	// 12. Homography2D's own arithmetic, by hand. H maps (X, Y) to
+	//     ((2X + 1) / w, (3Y - 2) / w) with w = 0.01 X + 1: at (10, 4), w = 1.1 and
+	//     the point goes to (21 / 1.1, 10 / 1.1).
+	{
+		Homography2D H;
+		const double h[9] = { 2, 0, 1, 0, 3, -2, 0.01, 0, 1 };
+		for (int i = 0; i < 9; i++) H.h[i] = h[i];
+		const Point2D m = H.map(Point2D(10, 4));
+		check(fabs(m.x - 21 / 1.1) < 1e-4 && fabs(m.y - 10 / 1.1) < 1e-4, "homography map: (10, 4) goes to (19.09, 9.09)");
+		const Point2D u = H.unmap(m);
+		check(fabs(u.x - 10) < 1e-4 && fabs(u.y - 4) < 1e-4, "homography unmap undoes map");
+		//d/dX of (2X + 1) / (0.01 X + 1) at 10 is (2 * 1.1 - 21 * 0.01) / 1.21
+		double j[4];
+		H.jacobian(Point2D(10, 4), j);
+		check(fabs(j[0] - (2.2 - 0.21) / 1.21) < 1e-6 && fabs(j[1]) < 1e-9
+			&& fabs(j[2] + 10 * 0.01 / 1.21) < 1e-6 && fabs(j[3] - 3 / 1.1) < 1e-6,
+			"homography jacobian at (10, 4), worked by hand");
+
+		//a POI seeded from H and measured as exactly H carries back to no movement at all
+		POI2D poi(Point2D(30, 17));
+		H.seed(poi);
+		H.toReference(poi);
+		check(fabs(poi.deformation.u) < 1e-4 && fabs(poi.deformation.v) < 1e-4 && fabs(poi.deformation.ux) < 1e-5
+			&& fabs(poi.deformation.uy) < 1e-5 && fabs(poi.deformation.vx) < 1e-5 && fabs(poi.deformation.vy) < 1e-5,
+			"a point that moved only with the camera carries back to no movement");
+
+		//a similarity as a homography maps every point as the similarity does
+		Similarity2D s;
+		s.scale = 1.07; s.angle = 0.3; s.tx = 4; s.ty = -9;
+		const Homography2D hs = Homography2D::from(s);
+		const Point2D a = s.map(Point2D(57, 23)), b = hs.map(Point2D(57, 23));
+		check(fabs(a.x - b.x) < 1e-4 && fabs(a.y - b.y) < 1e-4, "a similarity becomes the homography that maps as it does");
+	}
+
+	// 13. the camera TILTED between the sessions: the target's scale varies across
+	//     the picture by about 5 %. Asked for perspective, the fit on the ground places
+	//     every reference pixel within 0.01 px, and the specimen carried back through it
+	//     reads its own deformation. The similarity on the same ground cannot: it is the
+	//     reason the perspective fit exists.
+	{
+		TiltedCamera tilt;
+		{
+			const double c = cos(ANGLE), s = sin(ANGLE);
+			const double base[9] = { SCALE * c, -SCALE * s, 0, SCALE * s, SCALE * c, 0, 2.0e-4, -1.5e-4, 1 };
+			for (int i = 0; i < 9; i++) tilt.h[i] = base[i];
+			const Point2D at = tilt.map(CX, CY);
+			const double w = tilt.h[6] * CX + tilt.h[7] * CY + 1;
+			tilt.h[2] = (140 - at.x) * w;
+			tilt.h[5] = (120 - at.y) * w;
+		}
+		Image2D tilted_tar = render(tar_w, tar_h, nullptr, true, specimen, rig, &tilt);
+
+		SessionAlignment2D flat(15, 10, 4);
+		flat.setImages(ref, tilted_tar);
+		flat.setGround(&ground);
+		const AlignmentResult f = flat.compute();
+
+		SessionAlignment2D persp(15, 10, 4);
+		persp.setImages(ref, tilted_tar);
+		persp.setGround(&ground);
+		persp.setPerspective(true);
+		const AlignmentResult p = persp.compute();
+
+		const double worst_f = worstAgainstTilted(f.transform, tilt, ref_w, ref_h);
+		const double worst_p = worstAgainstTilted(p.projective, tilt, ref_w, ref_h);
+		printf("tilted, similarity: status %d, %d of %d used, rms %.4f px, worst mapping error %.4f px\n",
+			(int)f.status, f.refined_used, f.refined_points, f.residual_rms, worst_f);
+		printf("tilted, perspective: status %d, %d of %d used, rms %.4f px, worst mapping error %.5f px\n",
+			(int)p.status, p.refined_used, p.refined_points, p.residual_rms, worst_p);
+		check(p.status == AlignmentStatus::ok && p.perspective, "asked for perspective, the fit is a homography");
+		check(!f.perspective, "not asked, it is not");
+		check(worst_p < 0.01, "a tilted camera is recovered within 0.01 px anywhere on the image");
+		check(worst_f > 0.3, "the similarity cannot describe a tilted camera");
+		check(p.residual_rms < 0.01f && p.refined_used == p.refined_points,
+			"the residual and counts reported are the perspective fit's, not the similarity's");
+		//and unasked, the perspective check through the similarity's own subsets tells
+		//the tilt apart: it departs from the similarity by pixels and sits near the truth,
+		//which is what lets a caller say "the camera may have tilted" from one run
+		const double check_apart = worstAgainst(f.projective, f.transform, ref_w, ref_h);
+		const double check_truth = worstAgainstTilted(f.projective, tilt, ref_w, ref_h);
+		printf("tilted, unasked: the perspective check departs %.3f px from the similarity, %.4f px from the truth\n",
+			check_apart, check_truth);
+		check(f.projective_fitted && check_apart > 0.3 && check_truth < 0.05,
+			"unasked, the perspective check through the same subsets tells a tilted camera from a similarity");
+
+		//the specimen through the perspective fit, measured with second-order subsets: under
+		//a tilt the camera's warp across a subset curves, and first-order subsets measure
+		//this specimen 0.023 px off on average for that reason alone
+		ICGN2D2 icgn(16, 16, 0.001f, 20, 4);
+		icgn.setImages(ref, tilted_tar);
+		icgn.prepare();
+		vector<POI2D> pois;
+		for (int y = (int)CY - 36; y <= (int)CY + 36; y += 6)
+			for (int x = (int)CX - 36; x <= (int)CX + 36; x += 6)
+			{
+				if ((x - CX) * (x - CX) + (y - CY) * (y - CY) > 40 * 40) continue;
+				POI2D poi(Point2D((float)x, (float)y));
+				p.projective.seed(poi);
+				pois.push_back(poi);
+			}
+		icgn.compute(pois);
+		double error = 0, g[4] = { 0, 0, 0, 0 };
+		int solved = 0;
+		for (auto& poi : pois)
+		{
+			if (poi.result.zncc < 0.9f) continue;
+			p.projective.toReference(poi);
+			const Point2D t = deform(poi.x, poi.y);
+			error += hypot(poi.deformation.u - (t.x - poi.x), poi.deformation.v - (t.y - poi.y));
+			g[0] += poi.deformation.ux; g[1] += poi.deformation.uy; g[2] += poi.deformation.vx; g[3] += poi.deformation.vy;
+			solved++;
+		}
+		error /= max(solved, 1);
+		for (double& k : g) k /= max(solved, 1);
+		printf("tilted specimen: %d of %zu solved, mean displacement error %.5f px, gradient %+.5f %+.5f %+.5f %+.5f\n",
+			solved, pois.size(), error, g[0], g[1], g[2], g[3]);
+		check(solved == (int)pois.size() && error < 0.01, "through the perspective fit the specimen's displacement is within 0.01 px");
+		check(fabs(g[0] - E11) < 3e-4 && fabs(g[1] - E12) < 3e-4 && fabs(g[2] - E21) < 3e-4 && fabs(g[3] - E22) < 3e-4,
+			"and each gradient term within 3e-4 of E");
+	}
+
+	// 14. not asked for perspective, the homography through the same ground is still
+	//     fitted, as a check on the similarity: on the untilted pair it agrees with the
+	//     similarity everywhere, so a caller can say the camera did not tilt.
+	{
+		const double apart = worstAgainst(on_ground.projective, on_ground.transform, ref_w, ref_h);
+		printf("untilted: the perspective check departs from the similarity by %.5f px at most\n", apart);
+		check(on_ground.projective_fitted, "the perspective check is fitted alongside the similarity");
+		check(apart < 0.01, "and on an untilted camera it agrees with the similarity within 0.01 px");
 	}
 
 	printf("%s: %d failure(s)\n", failures ? "FAILED" : "PASSED", failures);

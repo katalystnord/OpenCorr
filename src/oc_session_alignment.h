@@ -73,6 +73,28 @@ namespace opencorr
 		void toReference(POI2D& poi) const;
 	};
 
+	//x = H(X), the camera TILTED against the reference: a plane seen by two cameras is
+	//related by a homography, and a similarity is the special case with no tilt. h is
+	//row-major with h[8] = 1: x = (h0 X + h1 Y + h2) / w, y = (h3 X + h4 Y + h5) / w,
+	//w = h6 X + h7 Y + 1. Only the plane is mapped exactly; what stands off it is not.
+	struct Homography2D
+	{
+		double h[9] = { 1, 0, 0, 0, 1, 0, 0, 0, 1 };
+
+		static Homography2D from(const Similarity2D& similarity);
+
+		Point2D map(const Point2D& reference) const;
+		Point2D unmap(const Point2D& target) const;
+
+		//d map / dX at X: j = { dx/dX, dx/dY, dy/dX, dy/dY }
+		void jacobian(const Point2D& reference, double j[4]) const;
+
+		//as Similarity2D's: the camera's own local stretch and turn at the point, which
+		//under a tilt differ from point to point
+		void seed(POI2D& poi) const;
+		void toReference(POI2D& poi) const;
+	};
+
 	enum class AlignmentStatus
 	{
 		ok,
@@ -86,6 +108,16 @@ namespace opencorr
 	{
 		AlignmentStatus status = AlignmentStatus::no_images;
 		Similarity2D transform; //identity unless status is ok
+
+		//the perspective fit through the same ground subsets. Always fitted when the
+		//refinement had enough to fit it, as a check on the similarity: on a camera that
+		//did not tilt the two agree. When perspective was asked for (setPerspective) it is
+		//THE camera move, perspective is true, and the counts, residual and per-subset
+		//report below describe it rather than the similarity.
+		bool perspective = false;
+		bool projective_fitted = false;
+		Homography2D projective;
+		float projective_rms = 0.f; //px in the target, of its own kept points
 
 		int matches = 0; //SIFT matches with the reference keypoint on the ground
 		int inliers = 0; //of those, RANSAC inliers
@@ -131,6 +163,12 @@ namespace opencorr
 		void setKnownLength(const Point2D& a, const Point2D& b);
 		void clearKnownLength();
 
+		//fit the camera move as a homography rather than a similarity: for a camera tilted
+		//between the sessions. Only on GROUND: fitted on the specimen it would take up every
+		//uniform strain, where the similarity takes up only the dilatation. A known length
+		//is not used with it, since a tilted camera has no single scale.
+		void setPerspective(bool on);
+
 		AlignmentResult compute();
 
 	private:
@@ -143,6 +181,7 @@ namespace opencorr
 		int min_matches = 8;
 		int min_refined = 6;
 		bool has_known_length = false;
+		bool perspective = false;
 		Point2D known_length[2];
 	};
 
