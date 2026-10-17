@@ -17,6 +17,8 @@
 #ifndef _SESSION_ALIGNMENT_H_
 #define _SESSION_ALIGNMENT_H_
 
+#include <vector>
+
 #include "oc_image.h"
 #include "oc_poi.h"
 #include "oc_point.h"
@@ -90,6 +92,17 @@ namespace opencorr
 		int refined_points = 0; //ground subsets attempted in the refinement
 		int refined_used = 0; //of those, converged and kept by the final fit
 		float residual_rms = 0.f; //px in the target, of the kept points about the final fit
+
+		//every refinement subset, in the order attempted, so a caller can say WHERE the
+		//ground disagreed with the fit and not only how many subsets it lost: its centre
+		//in the reference, its correlation, its distance from the final fit (px in the
+		//target; NaN where it did not converge) and whether the final fit kept it. A
+		//subset that correlated well and was rejected far from the fit sits on ground
+		//that moved. Filled whenever the refinement ran, even if it then fell short.
+		std::vector<Point2D> refined_centre;
+		std::vector<float> refined_zncc;
+		std::vector<float> refined_residual;
+		std::vector<char> refined_kept;
 
 		//the known length, when one was given: where each end was found on the target,
 		//how well it correlated, and whether the scale was taken from it

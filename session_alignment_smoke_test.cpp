@@ -40,6 +40,11 @@
     terms, which is what lets the case tell the two apart.
  9. A known length with an end too near the edge is refused.
 10. A known length with an end covered on the target is refused.
+11. Ground marked partly OVER THE SPECIMEN, with a patch of real ground covered
+    on the target. Every refinement subset is reported with its centre, its
+    correlation, its offset from the fit and whether the fit kept it, so a
+    caller can say where ground moved. The specimen's subsets are rejected 1.26
+    px or more from the fit, the kept ones sit within 0.003 px.
 
  Measured: ground fit 0.0012 px worst over the image (RANSAC alone 0.033 px);
  specimen displacement carried back within 0.0011 px on average.
@@ -69,6 +74,18 @@
    nothing is read past an image edge to find out.
  - The first fit at the known scale, before the reweighting, removed: NOT
    caught. The rounds that follow reach the same fit from the free one.
+
+ Every refinement subset reported (2026-10-17), each run and reverted:
+ - Offsets and kept flags indexed by the CONVERGED subsets instead of all of
+   them: case 11 red, four checks. ⚑ Not caught until the covered patch was
+   added: with every subset converging the two indexings are the same.
+ - An offset written only for kept subsets: case 11 red (also not caught until
+   the offsets were required to be finite: a min() over NaN keeps its start).
+ - Unconverged subsets left out of the report: case 11 red, six checks.
+ - Every subset reported kept: case 11 red, three checks.
+ - The offset measured from the RANSAC fit, not the final one: case 11 red,
+   and case 1.
+ - A subset that did not correlate given an offset of zero: case 11 red.
 */
 
 #include <cmath>
@@ -524,6 +541,86 @@ int main()
 		printf("covered end: zncc %.4f %.4f\n", r.known_length_zncc[0], r.known_length_zncc[1]);
 		check(r.status == AlignmentStatus::known_length_unmeasured && !r.known_length_used,
 			"a known length with an end covered on the target is refused");
+	}
+
+	// 11. ground marked partly OVER THE SPECIMEN: the rig, plus a box on the disc that
+	//     the caller wrongly calls stationary. The refinement rejects the box's
+	//     subsets, and the result must say which subsets those were, where they sit
+	//     and how far they disagree with the fit, so the caller can say WHERE the
+	//     ground moved rather than only that a count fell short.
+	{
+		OrderedRegion2D wrong;
+		wrong.add(rectangle(0, 0, ref_w - 1, ref_h - 1));
+		wrong.cut(make_unique<Ellipse2D>(CX, CY, DISC + 10, DISC + 10));
+		const int bx0 = (int)CX - 40, by0 = (int)CY - 30, bx1 = (int)CX + 10, by1 = (int)CY + 30;
+		wrong.add(rectangle(bx0, by0, bx1, by1)); //inside the disc: this moved
+
+		//and a patch of real ground covered on the target, as by a cable, so some
+		//subsets do not correlate at all: without them every subset converges, and a
+		//report indexed by the converged subsets lines up with one indexed by all of them
+		const int cx0 = 175, cy0 = 20, cx1 = 230, cy1 = 60; //reference pixels, on the rig
+		Image2D covered = render(tar_w, tar_h, &truth, true, specimen, rig);
+		for (int y = 0; y < tar_h; y++)
+			for (int x = 0; x < tar_w; x++)
+			{
+				const Point2D W = truth.unmap(x, y);
+				if (W.x < cx0 || W.x > cx1 || W.y < cy0 || W.y > cy1) continue;
+				covered.eg_mat(y, x) = 90.f;
+				covered.cv_mat.at<uchar>(y, x) = 90;
+			}
+
+		SessionAlignment2D partly(15, 10, 4);
+		partly.setImages(ref, covered);
+		partly.setGround(&wrong);
+		const AlignmentResult r = partly.compute();
+		const double worst = worstMapping(r.transform, truth, ref_w, ref_h);
+
+		const size_t n = r.refined_centre.size();
+		const bool sized = n == (size_t)r.refined_points && r.refined_zncc.size() == n
+			&& r.refined_residual.size() == n && r.refined_kept.size() == n;
+		int kept = 0, in_box = 0, in_box_rejected = 0, rejected_off_box = 0, unmatched = 0, unmatched_reported = 0;
+		float least_box_residual = 1e9f, worst_kept_residual = 0.f;
+		bool box_offsets_finite = true;
+		if (sized)
+			for (size_t i = 0; i < n; i++)
+			{
+				const Point2D& c = r.refined_centre[i];
+				const bool box = c.x >= bx0 && c.x <= bx1 && c.y >= by0 && c.y <= by1;
+				if (r.refined_kept[i])
+				{
+					kept++;
+					worst_kept_residual = max(worst_kept_residual, r.refined_residual[i]);
+				}
+				if (!(r.refined_zncc[i] >= 0.9f))
+				{
+					unmatched++;
+					if (!r.refined_kept[i] && std::isnan(r.refined_residual[i])) unmatched_reported++;
+					continue;
+				}
+				if (box)
+				{
+					in_box++;
+					if (!r.refined_kept[i]) in_box_rejected++;
+					if (!std::isfinite(r.refined_residual[i])) box_offsets_finite = false;
+					else least_box_residual = min(least_box_residual, r.refined_residual[i]);
+				}
+				else if (!r.refined_kept[i] && r.refined_residual[i] > 0.1f)
+					rejected_off_box++;
+			}
+		printf("ground partly on the specimen: %d of %d used, %d box subsets of which %d rejected, "
+			"least box offset %.3f px, worst kept %.4f px, %d not correlated, worst mapping error %.5f px\n",
+			r.refined_used, r.refined_points, in_box, in_box_rejected, least_box_residual,
+			worst_kept_residual, unmatched, worst);
+		check(r.status == AlignmentStatus::ok && worst < 0.005, "ground partly on the specimen still gets the camera right");
+		check(sized, "every refinement subset is reported, with its correlation, its offset and whether it was kept");
+		check(sized && kept == r.refined_used, "the kept subsets reported are the ones the fit used");
+		check(in_box > 0 && in_box_rejected == in_box, "every ground subset on the moving specimen is reported rejected");
+		check(in_box > 0 && box_offsets_finite && least_box_residual > 0.5f,
+			"and each is reported as far from the fit as the specimen moved");
+		check(unmatched > 0 && unmatched_reported == unmatched,
+			"a subset that did not correlate is reported unkept, with no offset");
+		check(rejected_off_box == 0, "no subset on the real ground is reported as having moved by more than 0.1 px");
+		check(sized && worst_kept_residual < 0.02f, "a kept subset's offset is reported as the fit's own small residual");
 	}
 
 	printf("%s: %d failure(s)\n", failures ? "FAILED" : "PASSED", failures);

@@ -14,6 +14,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <memory>
 
 #include <opencv2/calib3d.hpp>
@@ -249,11 +250,18 @@ namespace opencorr
 		icgn.compute(queue);
 
 		std::vector<Point2D> centre, found;
-		for (const auto& poi : queue)
+		std::vector<size_t> origin; //centre[k] is queue[origin[k]]
+		for (size_t i = 0; i < queue.size(); i++)
 		{
+			const POI2D& poi = queue[i];
+			result.refined_centre.push_back(Point2D(poi.x, poi.y));
+			result.refined_zncc.push_back(poi.result.zncc);
+			result.refined_residual.push_back(std::numeric_limits<float>::quiet_NaN());
+			result.refined_kept.push_back(0);
 			if (!(poi.result.zncc >= 0.9f) || !std::isfinite(poi.deformation.u) || !std::isfinite(poi.deformation.v)) continue;
 			centre.push_back(Point2D(poi.x, poi.y));
 			found.push_back(Point2D(poi.x + poi.deformation.u, poi.y + poi.deformation.v));
+			origin.push_back(i);
 		}
 		if ((int)centre.size() < min_refined) return result;
 
@@ -285,8 +293,10 @@ namespace opencorr
 		int used = 0;
 		for (size_t i = 0; i < centre.size(); i++)
 		{
-			if (!keep[i]) continue;
 			const double e = residual(fine, centre[i], found[i]);
+			result.refined_residual[origin[i]] = (float)e;
+			result.refined_kept[origin[i]] = keep[i];
+			if (!keep[i]) continue;
 			ss += e * e;
 			used++;
 		}
