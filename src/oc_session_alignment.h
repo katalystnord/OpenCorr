@@ -141,6 +141,10 @@ namespace opencorr
 		bool known_length_used = false;
 		Point2D known_length_target[2];
 		float known_length_zncc[2] = { 0.f, 0.f };
+		//which end refused the alignment (known_length_unmeasured): 0 or 1, else -1. Not
+		//to be inferred from the correlations, which read zero for both ends when the
+		//second is refused at the image's edge before either is correlated
+		int known_length_failed_end = -1;
 	};
 
 	class SessionAlignment2D

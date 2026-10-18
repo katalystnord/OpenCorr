@@ -119,6 +119,12 @@
  - Gauss-Newton cut to one iteration: NOT caught. In normalised coordinates
    the fit is nearly linear and one step from a similarity start lands within
    the tolerances here; the iterations stay for stronger tilts.
+
+ Which end refused (2026-10-18), each run and reverted:
+ - The field never set at the edge: case 9 red, both ends.
+ - Never set when an end does not correlate: case 10 red.
+ Found from SurView: before the field, a caller inferred the end from the
+ correlations, and a second end refused at the edge blamed the first.
 */
 
 #include <cmath>
@@ -601,6 +607,17 @@ int main()
 		const AlignmentResult r = edge.compute();
 		check(r.status == AlignmentStatus::known_length_unmeasured && !r.known_length_used,
 			"a known length with an end too near the edge to correlate is refused");
+		check(r.known_length_failed_end == 0, "and the end refused is named: the first");
+
+		//⚑ the SECOND end at the edge, the first fine: refused before either end is
+		//correlated, so both correlations read zero and only the field says which
+		SessionAlignment2D second(15, 10, 4);
+		second.setImages(ref, tar);
+		second.setGround(&ground);
+		second.setKnownLength(Point2D(22, 24), Point2D(236, 196));
+		const AlignmentResult s2 = second.compute();
+		check(s2.status == AlignmentStatus::known_length_unmeasured && s2.known_length_failed_end == 1,
+			"a known length refused at its second end names the second end");
 	}
 
 	// 10. an end inside both images that does not correlate: the target is covered
@@ -623,6 +640,7 @@ int main()
 		printf("covered end: zncc %.4f %.4f\n", r.known_length_zncc[0], r.known_length_zncc[1]);
 		check(r.status == AlignmentStatus::known_length_unmeasured && !r.known_length_used,
 			"a known length with an end covered on the target is refused");
+		check(r.known_length_failed_end == 1, "and the covered end is the one named");
 	}
 
 	// 11. ground marked partly OVER THE SPECIMEN: the rig, plus a box on the disc that

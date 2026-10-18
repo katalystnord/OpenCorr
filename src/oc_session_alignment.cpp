@@ -389,11 +389,15 @@ namespace opencorr
 		{
 			result.status = AlignmentStatus::known_length_unmeasured;
 			std::vector<POI2D> ends;
-			for (const Point2D& end : known_length)
+			for (int i = 0; i < 2; i++)
 			{
-				POI2D poi(end);
+				POI2D poi(known_length[i]);
 				coarse.seed(poi);
-				if (!fitsBoth(poi)) return result;
+				if (!fitsBoth(poi))
+				{
+					result.known_length_failed_end = i;
+					return result;
+				}
 				ends.push_back(poi);
 			}
 			icgn.compute(ends);
@@ -402,7 +406,10 @@ namespace opencorr
 				const POI2D& poi = ends[i];
 				result.known_length_zncc[i] = poi.result.zncc;
 				if (!(poi.result.zncc >= 0.9f) || !std::isfinite(poi.deformation.u) || !std::isfinite(poi.deformation.v))
+				{
+					result.known_length_failed_end = i;
 					return result;
+				}
 				result.known_length_target[i] = Point2D(poi.x + poi.deformation.u, poi.y + poi.deformation.v);
 			}
 			const double before = std::hypot(known_length[1].x - known_length[0].x, known_length[1].y - known_length[0].y);
